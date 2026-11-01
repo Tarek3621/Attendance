@@ -40,6 +40,7 @@ input:focus,select:focus{outline:2px solid var(--pri);outline-offset:1px}
 .pill{display:inline-block;border-radius:999px;padding:2px 10px;font-size:13px;font-weight:700}
 .pill.in{background:var(--okbg);color:var(--ok)}
 .pill.out{background:var(--soft);color:var(--mut)}
+.pill.brk{background:var(--warnbg);color:var(--warn)}
 .pill.none{background:var(--badbg);color:var(--bad)}
 .msg{border-radius:12px;padding:10px 12px;margin:10px 0;font-size:15px}
 .msg.err{background:var(--badbg);color:var(--bad)}
@@ -103,8 +104,10 @@ const ERR = {
   AUTH: 'سجّل الدخول الأول.',
   BAD_CODE: 'الكود غلط أو اتستخدم قبل كده.',
   NOT_EMPLOYEE: 'حسابك مش مربوط بموظف مفعّل. كلّم الأدمن.',
-  ALREADY_IN: 'إنت مسجّل حضور بالفعل. سجّل انصراف الأول.',
-  NOT_IN: 'مفيش حضور مسجّل عشان تسجّل انصراف.',
+  ALREADY_IN: 'إنت مسجّل حضور بالفعل. حدّث الصفحة وجرّب تاني.',
+  NOT_IN: 'العملية دي مش متاحة في حالتك الحالية. حدّث الصفحة وجرّب تاني.',
+  NOT_ON_BREAK: 'إنت مش في استراحة دلوقتي.',
+  ADDRESS_REQUIRED: 'اكتب عنوان الموقع (3 حروف على الأقل).',
   BAD_LOCATION: 'الموقع اللي اتقرا مش صالح. جرّب تاني.',
   LOW_ACCURACY: 'دقة الموقع ضعيفة. اطلع مكان مفتوح أو شغّل GPS بدقة عالية وجرّب تاني.',
   'Invalid login credentials': 'اسم المستخدم أو كلمة السر غلط.',
@@ -170,26 +173,12 @@ function realApi() {
     },
     async claim(code) { await rpc('claim_employee', { p_code: code }); },
     signOut() { save(null); },
-    async checkIn(kind, pos) { return rpc('check_in', { p_kind: kind, p_lat: pos.lat, p_lng: pos.lng, p_accuracy: pos.acc }); },
-    async myHistory(empId) { return rest('attendance?select=*&employee_id=eq.' + empId + '&order=at.desc&limit=60'); },
-    branches: () => rest('branches?select=*&order=created_at'),
-    async saveBranch(b) {
-      const body = { name: b.name, lat: b.lat, lng: b.lng, radius_m: b.radius_m, active: b.active };
-      if (b.id) return rest('branches?id=eq.' + b.id, { method: 'PATCH', body });
-      return rest('branches', { method: 'POST', body });
-    },
-    delBranch: id => rest('branches?id=eq.' + id, { method: 'DELETE' }),
-    async employees() {
-      const [e, eb] = await Promise.all([rest('employees?select=*&order=created_at'), rest('employee_branches?select=*')]);
-      return e.map(x => ({ ...x, branch_ids: eb.filter(y => y.employee_id === x.id).map(y => y.branch_id) }));
-    },
-    async addEmployee(name, branchIds) {
+    async checkIn(kind, pos, address, note) { return rpc('check_in', { p_kind: kind, p_lat: pos.lat, p_lng: pos.lng, p_accuracy: pos.acc, p_address: address || '', p_note: note || '' }); },
+    async myHistory(empId) { return rest('attendance?select=*&employee_id=eq.' + empId + '&order=at.desc&limit=200'); },
+    async employees() { return rest('employees?select=*&order=created_at'); },
+    async addEmployee(name) {
       const r = await rest('employees', { method: 'POST', headers: { Prefer: 'return=representation' }, body: { full_name: name, join_code: genCode() } });
-      await this.setEmpBranches(r[0].id, branchIds); return r[0];
-    },
-    async setEmpBranches(id, ids) {
-      await rest('employee_branches?employee_id=eq.' + id, { method: 'DELETE' });
-      if (ids.length) await rest('employee_branches', { method: 'POST', body: ids.map(b => ({ employee_id: id, branch_id: b })) });
+      return r[0];
     },
     updEmployee: (id, patch) => rest('employees?id=eq.' + id, { method: 'PATCH', body: patch }),
     delEmployee: id => rest('employees?id=eq.' + id, { method: 'DELETE' }),
@@ -206,11 +195,10 @@ function mockApi() {
   let db;
   try { db = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { }
   if (!db) {
-    const b1 = uid(), e1 = uid(), e2 = uid();
+    const e1 = uid(), e2 = uid();
     db = {
-      branches: [{ id: b1, name: 'الفرع الرئيسي', lat: 30.0444, lng: 31.2357, radius_m: 150, active: true }],
-      employees: [{ id: e1, user_id: null, full_name: 'أحمد محمد', join_code: '111111', active: true, branch_ids: [] },
-      { id: e2, user_id: null, full_name: 'سارة علي', join_code: '222222', active: true, branch_ids: [] }],
+      employees: [{ id: e1, user_id: null, full_name: 'أحمد محمد', join_code: '111111', active: true },
+      { id: e2, user_id: null, full_name: 'سارة علي', join_code: '222222', active: true }],
       attendance: [], users: { admin: { pw: 'admin', role: 'admin' } }, session: null
     };
   }
@@ -240,31 +228,23 @@ function mockApi() {
       e.user_id = db.session; cur().empId = e.id; save();
     },
     signOut() { db.session = null; save(); },
-    async checkIn(kind, pos) {
+    async checkIn(kind, pos, address, note) {
       const e = myEmp(); if (!e) err('NOT_EMPLOYEE');
-      if ((pos.acc || 0) > 150) err('LOW_ACCURACY');
+      if ((pos.acc || 0) > 300) err('LOW_ACCURACY');
       const last = lastOf(e.id);
-      if (kind === 'in' && last && last.kind === 'in') err('ALREADY_IN');
-      if (kind === 'out' && (!last || last.kind === 'out')) err('NOT_IN');
-      const allowed = db.branches.filter(b => b.active && (!e.branch_ids.length || e.branch_ids.includes(b.id)));
-      const hits = allowed.map(b => ({ b, d: distM(pos.lat, pos.lng, b.lat, b.lng) })).filter(x => x.d <= x.b.radius_m).sort((a, b) => a.d - b.d);
-      if (!hits.length) {
-        const n = Math.min(...allowed.map(b => distM(pos.lat, pos.lng, b.lat, b.lng)));
-        err('OUTSIDE:' + (isFinite(n) ? Math.round(n) : '?'));
-      }
-      const rec = { id: uid(), employee_id: e.id, branch_id: hits[0].b.id, kind, at: new Date().toISOString(), lat: pos.lat, lng: pos.lng, accuracy_m: pos.acc, distance_m: hits[0].d };
+      const st = !last ? 'out' : (last.kind === 'in' || last.kind === 'break_end') ? 'in' : last.kind === 'break_start' ? 'break' : 'out';
+      if (kind === 'in' && st !== 'out') err('ALREADY_IN');
+      if (kind === 'out' && st !== 'in') err('NOT_IN');
+      if (kind === 'break_start' && st !== 'in') err('NOT_IN');
+      if (kind === 'break_end' && st !== 'break') err('NOT_ON_BREAK');
+      let addr = (address || '').trim();
+      if (kind === 'in' || kind === 'out') { if (addr.length < 3) err('ADDRESS_REQUIRED'); } else if (!addr) addr = (last && last.address) || '';
+      const rec = { id: uid(), employee_id: e.id, kind, at: new Date().toISOString(), lat: pos.lat, lng: pos.lng, accuracy_m: pos.acc, address: addr.slice(0, 300), note: (note || '').trim().slice(0, 300) };
       db.attendance.push(rec); save(); return rec;
     },
-    async myHistory(id) { return db.attendance.filter(a => a.employee_id === id).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 60); },
-    async branches() { return db.branches.slice(); },
-    async saveBranch(b) {
-      if (b.id) Object.assign(db.branches.find(x => x.id === b.id), b); else db.branches.push({ ...b, id: uid() });
-      save();
-    },
-    async delBranch(id) { db.branches = db.branches.filter(b => b.id !== id); db.employees.forEach(e => e.branch_ids = e.branch_ids.filter(x => x !== id)); save(); },
+    async myHistory(id) { return db.attendance.filter(a => a.employee_id === id).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 200); },
     async employees() { return db.employees.map(e => ({ ...e })); },
-    async addEmployee(name, ids) { const e = { id: uid(), user_id: null, full_name: name, join_code: genCode(), active: true, branch_ids: ids }; db.employees.push(e); save(); return e; },
-    async setEmpBranches(id, ids) { db.employees.find(e => e.id === id).branch_ids = ids; save(); },
+    async addEmployee(name) { const e = { id: uid(), user_id: null, full_name: name, join_code: genCode(), active: true }; db.employees.push(e); save(); return e; },
     async updEmployee(id, patch) { Object.assign(db.employees.find(e => e.id === id), patch); save(); },
     async delEmployee(id) { db.employees = db.employees.filter(e => e.id !== id); db.attendance = db.attendance.filter(a => a.employee_id !== id); save(); },
     async newCode(id) { const e = db.employees.find(x => x.id === id); e.join_code = genCode(); e.user_id = null; save(); return e.join_code; },
@@ -324,6 +304,28 @@ function renderClaim() {
   <div style="margin-top:14px"><button class="btn" style="width:100%">ربط</button></div></form></div>`;
 }
 
+/* ---------- أدوات الحسابات ---------- */
+const KIND = { in: ['حضور', 'in'], out: ['انصراف', 'out'], break_start: ['بدء استراحة', 'brk'], break_end: ['نهاية استراحة', 'brk'] };
+const stateOf = last => !last ? 'out' : (last.kind === 'in' || last.kind === 'break_end') ? 'in' : last.kind === 'break_start' ? 'break' : 'out';
+// recsAsc: تسجيلات موظف واحد مرتبة من الأقدم. nowMs: لو متحدد، الفترة المفتوحة بتتحسب لحد دلوقتي.
+function calc(recsAsc, nowMs) {
+  let work = 0, brk = 0, st = null, bs = null;
+  for (const r of recsAsc) {
+    const t = Date.parse(r.at);
+    if (r.kind === 'in') { if (st == null && bs == null) st = t; }
+    else if (r.kind === 'break_start') { if (st != null) { work += t - st; st = null; bs = t; } }
+    else if (r.kind === 'break_end') { if (bs != null) { brk += t - bs; bs = null; st = t; } }
+    else if (r.kind === 'out') { if (st != null) { work += t - st; st = null; } else if (bs != null) { brk += t - bs; bs = null; } }
+  }
+  if (nowMs) { if (st != null) work += nowMs - st; if (bs != null) brk += nowMs - bs; }
+  return { work, brk, open: st != null || bs != null };
+}
+const kindPill = k => `<span class="pill ${KIND[k][1]}">${KIND[k][0]}</span>`;
+const recLine = r => `<div class="it" style="align-items:flex-start"><div class="grow">${kindPill(r.kind)} <b>${fmtTime(r.at)}</b>
+  <div>${esc(r.address || '—')}</div>${r.note ? `<div class="mut">${esc(r.note)}</div>` : ''}</div><a href="${mapLink(r.lat, r.lng)}" target="_blank" rel="noopener">الموقع</a></div>`;
+const rememberAddr = a => { try { const l = JSON.parse(localStorage.getItem('att.addr') || '[]').filter(x => x !== a); l.unshift(a); localStorage.setItem('att.addr', JSON.stringify(l.slice(0, 10))); } catch (e) { } };
+const recentAddr = () => { try { return JSON.parse(localStorage.getItem('att.addr') || '[]'); } catch (e) { return []; } };
+
 /* ---------- شاشة الموظف ---------- */
 function getPosition() {
   return new Promise((res, rej) => {
@@ -339,29 +341,38 @@ async function renderEmployee() {
   const e = S.me.emp;
   let hist = [];
   try { hist = await api.myHistory(e.id); } catch (er) { setMsg('err', errText(er)); }
-  S.data.hist = hist;
-  const last = hist[0];
-  const isIn = last && last.kind === 'in';
-  const todayRecs = hist.filter(h => dayKey(h.at) === dayKey(Date.now())).slice().reverse();
+  const last = hist[0], st = stateOf(last), now = Date.now();
+  const todayRecs = hist.filter(h => dayKey(h.at) === dayKey(now)).slice().reverse();
+  const tc = calc(todayRecs, now);
   const byDay = {};
   hist.slice().reverse().forEach(h => { (byDay[dayKey(h.at)] ||= []).push(h); });
   const days = Object.keys(byDay).sort().reverse().slice(0, 14).map(k => {
-    const rs = byDay[k]; let tot = 0, openAt = null;
-    rs.forEach(r => { if (r.kind === 'in') openAt = new Date(r.at); else if (openAt) { tot += new Date(r.at) - openAt; openAt = null; } });
-    const first = rs.find(r => r.kind === 'in'), lastOut = rs.slice().reverse().find(r => r.kind === 'out');
-    return `<div class="it"><div><b>${fmtDate(rs[0].at)}</b><div class="mut">${first ? 'حضور ' + fmtTime(first.at) : ''}${lastOut ? ' · انصراف ' + fmtTime(lastOut.at) : openAt ? ' · لم ينصرف' : ''}</div></div><span class="mut">${tot ? fmtHours(tot) : ''}</span></div>`;
+    const rs = byDay[k], c = calc(rs, k === dayKey(now) ? now : 0);
+    return `<div class="it"><div><b>${fmtDate(rs[0].at)}</b><div class="mut">${rs.filter(r => r.kind === 'in').length} موقع · استراحة ${fmtHours(c.brk)}${c.open && k !== dayKey(now) ? ' · لم ينصرف' : ''}</div></div><b>${fmtHours(c.work)}</b></div>`;
   }).join('');
+  const stPill = st === 'in' ? `<span class="pill in">في العمل · ${esc(last.address || '')}</span>` : st === 'break' ? `<span class="pill brk">في استراحة منذ ${fmtTime(last.at)}</span>` : last ? `<span class="pill out">خارج العمل · آخر انصراف ${fmtTime(last.at)}</span>` : `<span class="pill out">لا يوجد تسجيل بعد</span>`;
+  const dis = S.busy ? 'disabled' : '';
+  const addrBlock = st === 'break' ? '' : `<div style="width:100%;max-width:420px;text-align:start">
+      <label for="addr">${st === 'in' ? 'عنوان المكان اللي إنت مغادره (إجباري)' : 'عنوان المكان اللي وصلت له أو بدأت منه (إجباري)'}</label>
+      <input id="addr" list="addrList" maxlength="300" placeholder="مثال: موقع مشروع العاصمة الإدارية، أو هيئة الطرق - مدينة نصر" autocomplete="off" value="${esc(S.data.addr || '')}">
+      <datalist id="addrList">${recentAddr().map(a => `<option value="${esc(a)}">`).join('')}</datalist>
+      <label for="note">ملاحظة (اختياري)</label><input id="note" maxlength="300" placeholder="مثال: خارج للموقع، معاينة، اجتماع" value="${esc(S.data.note || '')}"></div>`;
+  const btns = st === 'out' ? `<button class="btn bigbtn" data-act="punch" data-kind="in" ${dis}>${S.busy ? 'جاري تحديد موقعك…' : 'تسجيل حضور'}</button>`
+    : st === 'in' ? `<button class="btn bigbtn outb" data-act="punch" data-kind="out" ${dis}>${S.busy ? 'جاري تحديد موقعك…' : 'تسجيل انصراف'}</button><button class="btn sec" style="width:100%;max-width:340px" data-act="punch" data-kind="break_start" ${dis}>بدء استراحة</button>`
+      : `<button class="btn bigbtn" data-act="punch" data-kind="break_end" ${dis}>${S.busy ? 'جاري تحديد موقعك…' : 'إنهاء الاستراحة'}</button>`;
   app.innerHTML = `${demoBar()}
   <header class="top"><h1>أهلًا ${esc(e.full_name)}</h1><button class="btn sec sm" data-act="logout">خروج</button></header>
   ${msgHtml()}
   <div class="card big">
     <div class="clock" id="clock"></div>
-    <div>${isIn ? `<span class="pill in">حاضر منذ ${fmtTime(last.at)}</span>` : last ? `<span class="pill out">آخر انصراف ${fmtTime(last.at)} · ${fmtDate(last.at)}</span>` : `<span class="pill out">لا يوجد تسجيل بعد</span>`}</div>
-    <button class="btn bigbtn ${isIn ? 'outb' : ''}" id="punch" data-act="punch" data-kind="${isIn ? 'out' : 'in'}" ${S.busy ? 'disabled' : ''}>${S.busy ? 'جاري تحديد موقعك…' : isIn ? 'تسجيل انصراف' : 'تسجيل حضور'}</button>
-    <div class="mut">هيتقرا موقعك لحظة الضغط فقط، ولازم تكون جوه نطاق الفرع.</div>
+    <div>${stPill}</div>
+    <div class="stat" style="width:100%;max-width:420px"><div><b>${fmtHours(tc.work)}</b>ساعات العمل اليوم</div><div><b>${fmtHours(tc.brk)}</b>استراحة اليوم</div></div>
+    ${addrBlock}
+    ${btns}
+    <div class="mut">موقعك بيتقرا لحظة الضغط فقط. تقدر تسجّل حضور وانصراف أكتر من مرة في اليوم (كل ما تنتقل لموقع).</div>
   </div>
   <div class="card"><h2>تسجيلات النهارده</h2>
-    ${todayRecs.length ? `<div class="list">${todayRecs.map(r => `<div class="it"><span class="pill ${r.kind === 'in' ? 'in' : 'out'}">${r.kind === 'in' ? 'حضور' : 'انصراف'}</span><span>${fmtTime(r.at)}</span><a href="${mapLink(r.lat, r.lng)}" target="_blank" rel="noopener">الموقع</a></div>`).join('')}</div>` : '<div class="mut">لسه مفيش تسجيل النهارده.</div>'}
+    ${todayRecs.length ? `<div class="list">${todayRecs.map(recLine).join('')}</div>` : '<div class="mut">لسه مفيش تسجيل النهارده.</div>'}
   </div>
   <div class="card"><h2>آخر الأيام</h2>${days ? `<div class="list">${days}</div>` : '<div class="mut">مفيش بيانات.</div>'}</div>`;
   const tick = () => { const c = $('#clock'); if (c) c.textContent = new Intl.DateTimeFormat('ar-EG', { timeZone: TZ, hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date()); };
@@ -369,95 +380,90 @@ async function renderEmployee() {
 }
 
 async function punch(kind) {
-  S.busy = true; setMsg(); const btn = $('#punch'); if (btn) { btn.disabled = true; btn.textContent = 'جاري تحديد موقعك…'; }
+  const addrEl = $('#addr'), noteEl = $('#note');
+  const address = addrEl ? addrEl.value.trim() : '', note = noteEl ? noteEl.value.trim() : '';
+  S.data.addr = address; S.data.note = note;
+  if ((kind === 'in' || kind === 'out') && address.length < 3) { setMsg('err', ERR.ADDRESS_REQUIRED); render(); const a = $('#addr'); if (a) a.focus(); return; }
+  S.busy = true; setMsg(); render();
   try {
     const pos = await getPosition();
-    if (pos.acc > 150) throw { message: 'LOW_ACCURACY' };
-    await api.checkIn(kind, pos);
-    setMsg('okm', kind === 'in' ? 'تم تسجيل الحضور ✓' : 'تم تسجيل الانصراف ✓');
+    if (pos.acc > 300) throw { message: 'LOW_ACCURACY' };
+    await api.checkIn(kind, pos, address, note);
+    if (address) rememberAddr(address);
+    S.data.addr = ''; S.data.note = '';
+    setMsg('okm', { in: 'تم تسجيل الحضور ✓', out: 'تم تسجيل الانصراف ✓', break_start: 'بدأت الاستراحة ✓', break_end: 'انتهت الاستراحة ✓' }[kind]);
   } catch (e) { setMsg('err', errText(e)); }
   S.busy = false; render();
 }
 
 /* ---------- شاشة الأدمن ---------- */
-const TABS = [['today', 'النهارده'], ['records', 'السجلات'], ['emps', 'الموظفين'], ['branches', 'الفروع']];
+const TABS = [['today', 'النهارده'], ['records', 'السجلات'], ['emps', 'الموظفين']];
 async function renderAdmin() {
   app.innerHTML = `${demoBar()}<header class="top"><h1>لوحة الأدمن</h1><button class="btn sec sm" data-act="logout">خروج</button></header>
   ${msgHtml()}<div id="pane"><div class="mut">جاري التحميل…</div></div>
   <nav class="tabs">${TABS.map(([k, n]) => `<button data-act="tab" data-v="${k}" class="${S.tab === k ? 'on' : ''}">${n}</button>`).join('')}</nav>`;
-  try { await ({ today: paneToday, records: paneRecords, emps: paneEmps, branches: paneBranches })[S.tab](); }
+  try { await ({ today: paneToday, records: paneRecords, emps: paneEmps })[S.tab](); }
   catch (e) { $('#pane').innerHTML = `<div class="msg err">${esc(errText(e))}</div>`; }
 }
 
 async function paneToday() {
   const now = Date.now();
-  const [emps, brs, recs] = await Promise.all([api.employees(), api.branches(), api.attendance(new Date(now - 48 * 3600e3).toISOString(), new Date(now + 3600e3).toISOString())]);
-  const bn = id => (brs.find(b => b.id === id) || {}).name || '—';
+  const [emps, recs] = await Promise.all([api.employees(), api.attendance(new Date(now - 48 * 3600e3).toISOString(), new Date(now + 3600e3).toISOString())]);
   const act = emps.filter(e => e.active);
+  const rank = { in: 0, break: 1, out: 2, none: 3 };
   const rows = act.map(e => {
-    const mine = recs.filter(r => r.employee_id === e.id);
+    const mine = recs.filter(r => r.employee_id === e.id);           // الأحدث أولًا
     const last = mine[0];
+    const today = mine.filter(r => dayKey(r.at) === dayKey(now)).slice().reverse();
     let st = 'none';
-    if (last && last.kind === 'in') st = 'in';
-    else if (last && dayKey(last.at) === dayKey(now)) st = 'out';
-    const firstIn = mine.slice().reverse().find(r => r.kind === 'in' && dayKey(r.at) === dayKey(now));
-    return { e, last, st, firstIn };
-  }).sort((a, b) => ({ in: 0, out: 1, none: 2 }[a.st] - { in: 0, out: 1, none: 2 }[b.st]) || a.e.full_name.localeCompare(b.e.full_name, 'ar'));
-  const c = k => rows.filter(r => r.st === k).length;
-  $('#pane').innerHTML = `<div class="stat"><div><b>${c('in')}</b>حاضر</div><div><b>${c('out')}</b>انصرف</div><div><b>${c('none')}</b>لم يحضر</div></div>
+    if (last) { const s = stateOf(last); st = s === 'out' && dayKey(last.at) !== dayKey(now) ? 'none' : s; }
+    return { e, last, st, c: calc(today, now), n: today.filter(r => r.kind === 'in').length };
+  }).sort((a, b) => (rank[a.st] - rank[b.st]) || a.e.full_name.localeCompare(b.e.full_name, 'ar'));
+  const cnt = k => rows.filter(r => r.st === k).length;
+  const lbl = { in: 'في العمل', break: 'استراحة', out: 'انصرف', none: 'لم يحضر' };
+  const pc = { in: 'in', break: 'brk', out: 'out', none: 'none' };
+  $('#pane').innerHTML = `<div class="stat"><div><b>${cnt('in')}</b>في العمل</div><div><b>${cnt('break')}</b>استراحة</div><div><b>${cnt('out')}</b>انصرف</div><div><b>${cnt('none')}</b>لم يحضر</div></div>
   <div class="card" style="margin-top:12px"><div class="row sp"><h2 style="margin:0">${fmtDate(now)}</h2><button class="btn sec sm" data-act="refresh">تحديث</button></div>
-  <div class="list">${rows.length ? rows.map(({ e, last, st, firstIn }) => `<div class="it"><div><b>${esc(e.full_name)}</b>
-    <div class="mut">${last ? `${last.kind === 'in' ? 'حضور' : 'انصراف'} ${fmtTime(last.at)}${dayKey(last.at) !== dayKey(now) ? ' (' + fmtDate(last.at) + ')' : ''} · ${esc(bn(last.branch_id))}` : 'لا يوجد تسجيل'}</div></div>
-    <div class="row"><span class="pill ${st}">${{ in: 'حاضر', out: 'انصرف', none: 'لم يحضر' }[st]}</span>${last ? `<a href="${mapLink(last.lat, last.lng)}" target="_blank" rel="noopener">الموقع</a>` : ''}</div></div>`).join('') : '<div class="mut">أضف موظفين من تبويب «الموظفين».</div>'}</div></div>`;
+  <div class="list">${rows.length ? rows.map(({ e, last, st, c, n }) => `<div class="it" style="align-items:flex-start"><div class="grow"><b>${esc(e.full_name)}</b>
+    <div class="mut">${last && st !== 'none' ? `${KIND[last.kind][0]} ${fmtTime(last.at)}${dayKey(last.at) !== dayKey(now) ? ' (' + fmtDate(last.at) + ')' : ''}` : 'لا يوجد تسجيل'}</div>
+    ${last && st !== 'none' ? `<div>${esc(last.address || '—')}</div>` : ''}
+    ${st !== 'none' ? `<div class="mut">ساعات اليوم ${fmtHours(c.work)} · ${n} موقع</div>` : ''}</div>
+    <div class="row" style="flex-direction:column;align-items:flex-end"><span class="pill ${pc[st]}">${lbl[st]}</span>${last && st !== 'none' ? `<a href="${mapLink(last.lat, last.lng)}" target="_blank" rel="noopener">الموقع</a>` : ''}</div></div>`).join('') : '<div class="mut">أضف موظفين من تبويب «الموظفين».</div>'}</div></div>`;
 }
 
-function monthBounds(m) { // m = "YYYY-MM" بتوقيت التطبيق تقريبًا (±يوم هامش ثم نفلتر بالمفتاح)
+function monthBounds(m) {
   const [y, mo] = m.split('-').map(Number);
   return [new Date(Date.UTC(y, mo - 1, 1) - 86400e3).toISOString(), new Date(Date.UTC(y, mo, 1) + 86400e3).toISOString()];
 }
 async function paneRecords() {
   const m = S.data.month || monthKey(Date.now()), who = S.data.who || '';
   const [from, to] = monthBounds(m);
-  const [emps, brs, recsAll] = await Promise.all([api.employees(), api.branches(), api.attendance(from, to)]);
+  const [emps, recsAll] = await Promise.all([api.employees(), api.attendance(from, to)]);
   const recs = recsAll.filter(r => monthKey(r.at) === m && (!who || r.employee_id === who));
   const nm = id => (emps.find(e => e.id === id) || {}).full_name || '—';
-  const bn = id => (brs.find(b => b.id === id) || {}).name || '—';
-  const tot = {};
-  const asc = recs.slice().reverse(), open = {};
-  asc.forEach(r => {
-    if (r.kind === 'in') open[r.employee_id] = new Date(r.at);
-    else if (open[r.employee_id]) { tot[r.employee_id] = (tot[r.employee_id] || 0) + (new Date(r.at) - open[r.employee_id]); open[r.employee_id] = null; }
-  });
-  S.data.csv = recs.map(r => [nm(r.employee_id), r.kind === 'in' ? 'حضور' : 'انصراف', dayKey(r.at), fmtTime(r.at), bn(r.branch_id), Math.round(r.distance_m || 0), r.lat, r.lng]);
+  const byEmp = {};
+  recs.slice().reverse().forEach(r => { (byEmp[r.employee_id] ||= []).push(r); });
+  const tot = Object.keys(byEmp).map(id => ({ id, ...calc(byEmp[id]) })).sort((a, b) => nm(a.id).localeCompare(nm(b.id), 'ar'));
+  S.data.csv = recs.map(r => [nm(r.employee_id), KIND[r.kind][0], dayKey(r.at), fmtTime(r.at), r.address, r.note, r.lat, r.lng]);
   $('#pane').innerHTML = `<div class="card"><div class="grid2">
     <div><label for="fm">الشهر</label><input id="fm" type="month" value="${m}"></div>
     <div><label for="fw">الموظف</label><select id="fw"><option value="">الكل</option>${emps.map(e => `<option value="${e.id}" ${e.id === who ? 'selected' : ''}>${esc(e.full_name)}</option>`).join('')}</select></div></div>
     <div class="row" style="margin-top:10px"><button class="btn sec sm" data-act="csv">تصدير CSV</button><span class="mut">${recs.length} تسجيل</span></div></div>
-  <div class="card"><h2>ساعات العمل</h2><div class="list">${Object.keys(tot).length ? Object.keys(tot).sort((a, b) => nm(a).localeCompare(nm(b), 'ar')).map(id => `<div class="it"><span>${esc(nm(id))}</span><b>${fmtHours(tot[id])}</b></div>`).join('') : '<div class="mut">لا توجد ساعات مكتملة (حضور وانصراف) في الشهر ده.</div>'}</div></div>
-  <div class="card"><h2>التسجيلات</h2><div class="scroll"><table><thead><tr><th>الموظف</th><th>النوع</th><th>اليوم</th><th>الوقت</th><th>الفرع</th><th>الموقع</th></tr></thead><tbody>
-  ${recs.map(r => `<tr><td>${esc(nm(r.employee_id))}</td><td><span class="pill ${r.kind === 'in' ? 'in' : 'out'}">${r.kind === 'in' ? 'حضور' : 'انصراف'}</span></td><td>${dayKey(r.at)}</td><td>${fmtTime(r.at)}</td><td>${esc(bn(r.branch_id))}</td><td><a href="${mapLink(r.lat, r.lng)}" target="_blank" rel="noopener">خريطة</a></td></tr>`).join('') || '<tr><td colspan="6" class="mut">لا توجد تسجيلات.</td></tr>'}
+  <div class="card"><h2>ساعات العمل (بدون الاستراحة)</h2><div class="list">${tot.length ? tot.map(t => `<div class="it"><div>${esc(nm(t.id))}<div class="mut">استراحة ${fmtHours(t.brk)}${t.open ? ' · فيه فترة مفتوحة' : ''}</div></div><b>${fmtHours(t.work)}</b></div>`).join('') : '<div class="mut">لا توجد بيانات.</div>'}</div></div>
+  <div class="card"><h2>التسجيلات</h2><div class="scroll"><table><thead><tr><th>الموظف</th><th>النوع</th><th>اليوم</th><th>الوقت</th><th>العنوان</th><th>ملاحظة</th><th>الموقع</th></tr></thead><tbody>
+  ${recs.map(r => `<tr><td>${esc(nm(r.employee_id))}</td><td>${kindPill(r.kind)}</td><td>${dayKey(r.at)}</td><td>${fmtTime(r.at)}</td><td style="white-space:normal;min-width:160px">${esc(r.address)}</td><td style="white-space:normal">${esc(r.note)}</td><td><a href="${mapLink(r.lat, r.lng)}" target="_blank" rel="noopener">خريطة</a></td></tr>`).join('') || '<tr><td colspan="7" class="mut">لا توجد تسجيلات.</td></tr>'}
   </tbody></table></div></div>`;
 }
 
 async function paneEmps() {
-  const [emps, brs] = await Promise.all([api.employees(), api.branches()]);
-  S.data.emps = emps; S.data.brs = brs;
-  const bnames = e => e.branch_ids.length ? e.branch_ids.map(i => (brs.find(b => b.id === i) || {}).name).filter(Boolean).join('، ') : 'كل الفروع';
+  const emps = await api.employees();
+  S.data.emps = emps;
   $('#pane').innerHTML = `<div class="card"><h2>إضافة موظف</h2>
     <form id="empForm"><label for="en">الاسم</label><input id="en" required maxlength="60">
-    <label>الفروع المسموحة (لو ما اخترتش = كل الفروع)</label>${brs.length ? brs.map(b => `<label class="chk"><input type="checkbox" name="eb" value="${b.id}"> ${esc(b.name)}</label>`).join('') : '<div class="mut">أضف فرع الأول من تبويب «الفروع».</div>'}
-    <div style="margin-top:12px"><button class="btn" ${brs.length ? '' : 'disabled'}>إضافة وتوليد كود</button></div></form></div>
+    <div style="margin-top:12px"><button class="btn">إضافة وتوليد كود</button></div></form></div>
   <div class="card"><h2>الموظفين (${emps.length})</h2><div class="list">${emps.map(e => `<div class="it" style="align-items:flex-start"><div class="grow"><b>${esc(e.full_name)}</b> ${e.active ? '' : '<span class="pill none">موقوف</span>'}
-    <div class="mut">${esc(bnames(e))}</div>
     <div class="mut">${e.user_id ? 'الحساب مفعّل' : `كود التفعيل: <span class="code" style="font-size:16px">${esc(e.join_code)}</span>`}</div></div>
     <div class="row"><button class="btn sec sm" data-act="empEdit" data-id="${e.id}">تعديل</button></div></div>`).join('') || '<div class="mut">لا يوجد موظفين.</div>'}</div></div>`;
-}
-
-async function paneBranches() {
-  const brs = await api.branches(); S.data.brs = brs;
-  $('#pane').innerHTML = `<div class="card"><div class="row sp"><h2 style="margin:0">الفروع (${brs.length})</h2><button class="btn sm" data-act="brEdit" data-id="">+ فرع</button></div>
-  <div class="list">${brs.map(b => `<div class="it"><div><b>${esc(b.name)}</b> ${b.active ? '' : '<span class="pill none">موقوف</span>'}<div class="mut">نطاق ${b.radius_m} متر · <a href="${mapLink(b.lat, b.lng)}" target="_blank" rel="noopener">الخريطة</a></div></div>
-  <button class="btn sec sm" data-act="brEdit" data-id="${b.id}">تعديل</button></div>`).join('') || '<div class="mut">لسه مفيش فروع. أضف أول فرع وحدد موقعه.</div>'}</div></div>`;
 }
 
 /* ---------- نوافذ التعديل ---------- */
@@ -468,23 +474,10 @@ function dlg(html) {
   d.addEventListener('close', () => d.remove());
   d.showModal(); return d;
 }
-function editBranch(id) {
-  const b = (S.data.brs || []).find(x => x.id === id) || { name: '', lat: '', lng: '', radius_m: 150, active: true };
-  const d = dlg(`<h2 style="margin-top:0">${id ? 'تعديل فرع' : 'فرع جديد'}</h2><div id="dmsg"></div>
-  <form id="brForm"><label for="bn">اسم الفرع</label><input id="bn" required value="${esc(b.name)}">
-  <button type="button" class="btn sec" style="width:100%;margin-top:10px" data-act="useLoc">استخدم موقعي الحالي (وأنا واقف في الفرع)</button>
-  <div class="grid2"><div><label for="bla">خط العرض</label><input id="bla" inputmode="decimal" required value="${esc(b.lat)}"></div><div><label for="blo">خط الطول</label><input id="blo" inputmode="decimal" required value="${esc(b.lng)}"></div></div>
-  <div class="mut" style="margin-top:6px">تقدر تنسخ الإحداثيات من خرائط جوجل (اضغط مطوّلًا على المكان).</div>
-  <label for="br">نطاق التسجيل بالمتر (20 – 5000)</label><input id="br" type="number" min="20" max="5000" required value="${esc(b.radius_m)}">
-  <label class="chk"><input id="ba" type="checkbox" ${b.active ? 'checked' : ''}> الفرع نشط</label>
-  <div class="row" style="margin-top:14px"><button class="btn grow">حفظ</button>${id ? `<button type="button" class="btn bad" data-act="brDel" data-id="${id}">حذف</button>` : ''}<button type="button" class="btn sec" data-act="close">إلغاء</button></div></form>`);
-  d.querySelector('#brForm').dataset.id = id || '';
-}
 function editEmp(id) {
-  const e = S.data.emps.find(x => x.id === id), brs = S.data.brs;
+  const e = S.data.emps.find(x => x.id === id);
   dlg(`<h2 style="margin-top:0">تعديل: ${esc(e.full_name)}</h2><div id="dmsg"></div>
   <form id="emForm" data-id="${id}"><label for="emn">الاسم</label><input id="emn" required value="${esc(e.full_name)}">
-  <label>الفروع المسموحة (لو ما اخترتش = كل الفروع)</label>${brs.map(b => `<label class="chk"><input type="checkbox" name="eb" value="${b.id}" ${e.branch_ids.includes(b.id) ? 'checked' : ''}> ${esc(b.name)}</label>`).join('')}
   <label class="chk"><input id="ema" type="checkbox" ${e.active ? 'checked' : ''}> الموظف نشط</label>
   <div class="row" style="margin-top:14px"><button class="btn grow">حفظ</button><button type="button" class="btn sec" data-act="empCode" data-id="${id}">كود جديد / فك الربط</button></div>
   <div class="row" style="margin-top:10px"><button type="button" class="btn bad" data-act="empDel" data-id="${id}">حذف الموظف وسجلاته</button><button type="button" class="btn sec" data-act="close">إلغاء</button></div></form>`);
@@ -500,29 +493,21 @@ document.addEventListener('click', async ev => {
   const a = t.dataset.act, id = t.dataset.id, v = t.dataset.v;
   try {
     if (a === 'mode') { S.authMode = v; setMsg(); renderAuth(); }
-    else if (a === 'logout') { api.signOut(); S.me = null; S.tab = 'today'; setMsg(); render(); }
+    else if (a === 'logout') { api.signOut(); S.me = null; S.tab = 'today'; S.data = {}; setMsg(); render(); }
     else if (a === 'punch') await punch(t.dataset.kind);
     else if (a === 'tab') { S.tab = v; setMsg(); renderAdmin(); }
     else if (a === 'refresh') renderAdmin();
     else if (a === 'close') closeDlg();
-    else if (a === 'brEdit') editBranch(id);
     else if (a === 'empEdit') editEmp(id);
-    else if (a === 'useLoc') {
-      t.disabled = true; t.textContent = 'جاري تحديد الموقع…';
-      try { const p = await getPosition(); $('#bla').value = p.lat.toFixed(6); $('#blo').value = p.lng.toFixed(6); dmsg(`تم أخذ موقعك (دقة حوالي ${Math.round(p.acc)} متر).`, 'okm'); }
-      catch (e) { dmsg(errText(e)); }
-      t.disabled = false; t.textContent = 'استخدم موقعي الحالي (وأنا واقف في الفرع)';
-    }
-    else if (a === 'brDel') { if (confirm('حذف الفرع؟ التسجيلات القديمة هتفضل لكن من غير اسم فرع.')) { await api.delBranch(id); await refreshAdmin(); } }
     else if (a === 'empDel') { if (confirm('حذف الموظف وكل تسجيلاته نهائيًا؟ لو عايز توقفه بس، شيل علامة «نشط».')) { await api.delEmployee(id); await refreshAdmin(); } }
     else if (a === 'empCode') { const c = await api.newCode(id); dmsg('الكود الجديد: ' + c + ' (الحساب القديم اتفك ارتباطه)', 'okm'); }
     else if (a === 'csv') {
-      const rows = [['الموظف', 'النوع', 'اليوم', 'الوقت', 'الفرع', 'المسافة من الفرع (م)', 'lat', 'lng'], ...(S.data.csv || [])];
+      const rows = [['الموظف', 'النوع', 'اليوم', 'الوقت', 'العنوان', 'ملاحظة', 'lat', 'lng'], ...(S.data.csv || [])];
       const csv = '﻿' + rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\r\n');
       const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
       const l = document.createElement('a'); l.href = url; l.download = 'attendance-' + (S.data.month || monthKey(Date.now())) + '.csv'; l.click(); setTimeout(() => URL.revokeObjectURL(url), 2000);
     }
-  } catch (e) { dmsg(errText(e)); if (!$('#dmsg')) { setMsg('err', errText(e)); render(); } }
+  } catch (e) { S.busy = false; dmsg(errText(e)); if (!$('#dmsg')) { setMsg('err', errText(e)); render(); } }
 });
 
 document.addEventListener('change', ev => {
@@ -543,19 +528,11 @@ document.addEventListener('submit', async ev => {
     } else if (f.id === 'claimForm') {
       await api.claim($('#code').value.trim()); S.me = await api.me(); setMsg(); render();
     } else if (f.id === 'empForm') {
-      const ids = [...f.querySelectorAll('input[name=eb]:checked')].map(i => i.value);
-      const e = await api.addEmployee($('#en').value.trim(), ids);
+      const e = await api.addEmployee($('#en').value.trim());
       setMsg('okm', `تمت إضافة ${e.full_name}. كود التفعيل: ${e.join_code} (ابعته له)`); await renderAdmin();
-    } else if (f.id === 'brForm') {
-      const lat = parseFloat($('#bla').value.replace(',', '.')), lng = parseFloat($('#blo').value.replace(',', '.')), r = parseInt($('#br').value, 10);
-      if (!(lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180)) return dmsg('الإحداثيات مش صحيحة.');
-      if (!(r >= 20 && r <= 5000)) return dmsg('النطاق لازم يكون بين 20 و5000 متر.');
-      await api.saveBranch({ id: f.dataset.id || undefined, name: $('#bn').value.trim(), lat, lng, radius_m: r, active: $('#ba').checked });
-      await refreshAdmin();
     } else if (f.id === 'emForm') {
-      const id = f.dataset.id, ids = [...f.querySelectorAll('input[name=eb]:checked')].map(i => i.value);
-      await api.updEmployee(id, { full_name: $('#emn').value.trim(), active: $('#ema').checked });
-      await api.setEmpBranches(id, ids); await refreshAdmin();
+      await api.updEmployee(f.dataset.id, { full_name: $('#emn').value.trim(), active: $('#ema').checked });
+      await refreshAdmin();
     }
   } catch (e) {
     S.busy = false;
