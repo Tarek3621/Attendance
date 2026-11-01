@@ -1,0 +1,570 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0B5C4B">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="الحضور">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<title>الحضور والانصراف</title>
+<style>
+:root{--bg:#eef2f0;--card:#fff;--ink:#14231f;--mut:#5d6f69;--line:#d9e1de;--pri:#0B5C4B;--pri-ink:#fff;--ok:#18794e;--okbg:#e3f4ea;--warn:#a05a00;--warnbg:#fff1d6;--bad:#b3261e;--badbg:#fde7e5;--soft:#e1efe9}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1715;--card:#17211e;--ink:#e8f0ed;--mut:#9bb0a9;--line:#2a3a35;--pri:#2fb391;--pri-ink:#06211a;--ok:#5fd397;--okbg:#12301f;--warn:#f0b24b;--warnbg:#38290d;--bad:#ff8d85;--badbg:#3b1a18;--soft:#1b2c27}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Tahoma,"Noto Sans Arabic",sans-serif;font-size:16px;line-height:1.6;min-height:100vh;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+button,input,select{font:inherit;color:inherit}
+.wrap{max-width:760px;margin:0 auto;padding:16px 16px 96px}
+header.top{display:flex;align-items:center;gap:10px;justify-content:space-between;margin-bottom:14px}
+header.top h1{font-size:20px;margin:0}
+.demo{background:var(--warnbg);color:var(--warn);border-radius:10px;padding:8px 12px;font-size:14px;margin-bottom:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px;margin-bottom:12px}
+.card h2{font-size:17px;margin:0 0 10px}
+label{display:block;font-size:14px;color:var(--mut);margin:10px 0 4px}
+input,select{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px 12px;min-height:48px}
+input:focus,select:focus{outline:2px solid var(--pri);outline-offset:1px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;background:var(--pri);color:var(--pri-ink);border:0;border-radius:14px;padding:12px 18px;min-height:48px;font-weight:700;cursor:pointer}
+.btn.sec{background:var(--soft);color:var(--ink)}
+.btn.bad{background:var(--badbg);color:var(--bad)}
+.btn.sm{min-height:38px;padding:6px 12px;font-size:14px;border-radius:10px}
+.btn[disabled]{opacity:.55;cursor:default}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.row.sp{justify-content:space-between}
+.grow{flex:1}
+.mut{color:var(--mut);font-size:14px}
+.pill{display:inline-block;border-radius:999px;padding:2px 10px;font-size:13px;font-weight:700}
+.pill.in{background:var(--okbg);color:var(--ok)}
+.pill.out{background:var(--soft);color:var(--mut)}
+.pill.none{background:var(--badbg);color:var(--bad)}
+.msg{border-radius:12px;padding:10px 12px;margin:10px 0;font-size:15px}
+.msg.err{background:var(--badbg);color:var(--bad)}
+.msg.okm{background:var(--okbg);color:var(--ok)}
+.msg.inf{background:var(--soft)}
+.big{display:flex;flex-direction:column;align-items:center;text-align:center;gap:10px;padding:26px 16px}
+.clock{font-size:42px;font-weight:800;letter-spacing:1px;font-variant-numeric:tabular-nums}
+.bigbtn{width:100%;max-width:340px;min-height:84px;font-size:24px;border-radius:22px}
+.bigbtn.outb{background:#b3541e;color:#fff}
+.list .it{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:12px 0;border-top:1px solid var(--line)}
+.list .it:first-child{border-top:0}
+a{color:var(--pri)}
+nav.tabs{position:fixed;bottom:0;inset-inline:0;background:var(--card);border-top:1px solid var(--line);display:flex;padding-bottom:env(safe-area-inset-bottom);z-index:5}
+nav.tabs button{flex:1;background:none;border:0;padding:10px 4px;min-height:56px;color:var(--mut);font-size:13px;cursor:pointer}
+nav.tabs button.on{color:var(--pri);font-weight:800}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:8px 6px;text-align:start;border-bottom:1px solid var(--line);white-space:nowrap}
+.scroll{overflow-x:auto}
+.code{font-family:ui-monospace,Menlo,monospace;font-size:22px;letter-spacing:3px;font-weight:800;direction:ltr;display:inline-block}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:480px){.grid2{grid-template-columns:1fr}}
+.chk{display:flex;gap:8px;align-items:center;padding:6px 0}
+.chk input{width:22px;min-height:22px;height:22px}
+dialog{border:0;border-radius:18px;background:var(--card);color:var(--ink);max-width:min(520px,92vw);width:100%;padding:18px}
+dialog::backdrop{background:#0008}
+.stat{display:flex;gap:8px}
+.stat>div{flex:1;background:var(--soft);border-radius:14px;padding:10px;text-align:center}
+.stat b{display:block;font-size:24px}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<script src="config.js"></script>
+<script>
+'use strict';
+/* ====================== إعدادات عامة ====================== */
+const CFG = window.APP_CONFIG || {};
+const REAL = !!(CFG.SUPABASE_URL && CFG.SUPABASE_ANON_KEY);
+const TZ = CFG.TIMEZONE || 'Africa/Cairo';
+const EMAIL_DOMAIN = 'staff.example.com';
+
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmtTime = ts => new Intl.DateTimeFormat('ar-EG', { timeZone: TZ, hour: 'numeric', minute: '2-digit' }).format(new Date(ts));
+const fmtDate = ts => new Intl.DateTimeFormat('ar-EG', { timeZone: TZ, weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(ts));
+const dayKey = ts => new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ts));
+const monthKey = ts => dayKey(ts).slice(0, 7);
+const fmtHours = ms => { const m = Math.round(ms / 60000); return Math.floor(m / 60) + ' س ' + String(m % 60).padStart(2, '0') + ' د'; };
+const mapLink = (lat, lng) => `https://www.google.com/maps?q=${lat},${lng}`;
+const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id' + Math.random().toString(16).slice(2) + Date.now());
+function distM(a, b, c, d) {
+  const R = 6371000, r = Math.PI / 180, dLat = (c - a) * r, dLng = (d - b) * r;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a * r) * Math.cos(c * r) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+const toEmail = u => (u.includes('@') ? u : u.toLowerCase().replace(/[^a-z0-9._-]/g, '') + '@' + EMAIL_DOMAIN);
+const validUser = u => /^[a-zA-Z0-9._-]{3,30}$/.test(u) || /.+@.+\..+/.test(u);
+const genCode = () => String(Math.floor(100000 + Math.random() * 900000));
+
+const ERR = {
+  AUTH: 'سجّل الدخول الأول.',
+  BAD_CODE: 'الكود غلط أو اتستخدم قبل كده.',
+  NOT_EMPLOYEE: 'حسابك مش مربوط بموظف مفعّل. كلّم الأدمن.',
+  ALREADY_IN: 'إنت مسجّل حضور بالفعل. سجّل انصراف الأول.',
+  NOT_IN: 'مفيش حضور مسجّل عشان تسجّل انصراف.',
+  BAD_LOCATION: 'الموقع اللي اتقرا مش صالح. جرّب تاني.',
+  LOW_ACCURACY: 'دقة الموقع ضعيفة. اطلع مكان مفتوح أو شغّل GPS بدقة عالية وجرّب تاني.',
+  'Invalid login credentials': 'اسم المستخدم أو كلمة السر غلط.',
+  'User already registered': 'اسم المستخدم ده موجود. اختار اسم تاني.',
+  'Email not confirmed': 'لازم تعطّل Confirm email من إعدادات Supabase (راجع دليل الإعداد).'
+};
+function errText(e) {
+  const m = (e && (e.message || e.msg || e.error_description || e.error)) || String(e || '');
+  const o = /OUTSIDE:(\d+|\?)/.exec(m);
+  if (o) return o[1] === '?' ? 'إنت برة نطاق أي فرع متاح ليك.' : `إنت برة نطاق الفرع. أقرب فرع متاح بعيد عنك حوالي ${Number(o[1]).toLocaleString('ar-EG')} متر.`;
+  for (const k in ERR) if (m.includes(k)) return ERR[k];
+  if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return 'مفيش اتصال بالإنترنت. جرّب تاني.';
+  return m || 'حصل خطأ غير متوقع.';
+}
+
+/* ====================== الطبقة الحقيقية (Supabase عبر REST) ====================== */
+function realApi() {
+  const KEY = 'att.sess';
+  let sess = null;
+  try { sess = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { }
+  const save = s => { sess = s; try { s ? localStorage.setItem(KEY, JSON.stringify(s)) : localStorage.removeItem(KEY); } catch (e) { } };
+  const base = CFG.SUPABASE_URL.replace(/\/$/, '');
+  const setSess = j => save({ access_token: j.access_token, refresh_token: j.refresh_token, expires_at: Date.now() + (j.expires_in || 3600) * 1000 - 30000, user: j.user });
+
+  async function raw(path, opt = {}, authed = true) {
+    const h = { apikey: CFG.SUPABASE_ANON_KEY, 'Content-Type': 'application/json', ...(opt.headers || {}) };
+    if (authed) {
+      if (sess && Date.now() > sess.expires_at && sess.refresh_token) await refresh();
+      h.Authorization = 'Bearer ' + (sess ? sess.access_token : CFG.SUPABASE_ANON_KEY);
+    } else h.Authorization = 'Bearer ' + CFG.SUPABASE_ANON_KEY;
+    const r = await fetch(base + path, { method: opt.method || 'GET', headers: h, body: opt.body ? JSON.stringify(opt.body) : undefined });
+    const t = await r.text(); let j = null; try { j = t ? JSON.parse(t) : null; } catch (e) { j = { message: t }; }
+    if (!r.ok) throw j || { message: r.statusText };
+    return j;
+  }
+  async function refresh() {
+    try { const j = await raw('/auth/v1/token?grant_type=refresh_token', { method: 'POST', body: { refresh_token: sess.refresh_token } }, false); setSess(j); }
+    catch (e) { save(null); throw e; }
+  }
+  const rest = (p, o) => raw('/rest/v1/' + p, o);
+  const rpc = (n, b, authed = true) => raw('/rest/v1/rpc/' + n, { method: 'POST', body: b || {} }, authed);
+
+  return {
+    mode: 'real',
+    hasSession: () => !!sess,
+    async me() {
+      if (!sess) return null;
+      const u = sess.user.id;
+      const a = await rest('admins?select=user_id&user_id=eq.' + u);
+      if (a.length) return { role: 'admin', name: 'الأدمن' };
+      const e = await rest('employees?select=*&user_id=eq.' + u);
+      if (e.length) return { role: 'employee', emp: e[0], name: e[0].full_name };
+      return { role: 'none' };
+    },
+    async signIn(user, pw) { setSess(await raw('/auth/v1/token?grant_type=password', { method: 'POST', body: { email: toEmail(user), password: pw } }, false)); },
+    async codeValid(code) { return !!(await rpc('code_valid', { p_code: code }, false)); },
+    async signUp(code, user, pw) {
+      if (!(await this.codeValid(code))) throw { message: 'BAD_CODE' };
+      const j = await raw('/auth/v1/signup', { method: 'POST', body: { email: toEmail(user), password: pw } }, false);
+      if (!j.access_token) throw { message: 'Email not confirmed' };
+      setSess(j);
+      try { await rpc('claim_employee', { p_code: code }); } catch (e) { save(null); throw e; }
+    },
+    async claim(code) { await rpc('claim_employee', { p_code: code }); },
+    signOut() { save(null); },
+    async checkIn(kind, pos) { return rpc('check_in', { p_kind: kind, p_lat: pos.lat, p_lng: pos.lng, p_accuracy: pos.acc }); },
+    async myHistory(empId) { return rest('attendance?select=*&employee_id=eq.' + empId + '&order=at.desc&limit=60'); },
+    branches: () => rest('branches?select=*&order=created_at'),
+    async saveBranch(b) {
+      const body = { name: b.name, lat: b.lat, lng: b.lng, radius_m: b.radius_m, active: b.active };
+      if (b.id) return rest('branches?id=eq.' + b.id, { method: 'PATCH', body });
+      return rest('branches', { method: 'POST', body });
+    },
+    delBranch: id => rest('branches?id=eq.' + id, { method: 'DELETE' }),
+    async employees() {
+      const [e, eb] = await Promise.all([rest('employees?select=*&order=created_at'), rest('employee_branches?select=*')]);
+      return e.map(x => ({ ...x, branch_ids: eb.filter(y => y.employee_id === x.id).map(y => y.branch_id) }));
+    },
+    async addEmployee(name, branchIds) {
+      const r = await rest('employees', { method: 'POST', headers: { Prefer: 'return=representation' }, body: { full_name: name, join_code: genCode() } });
+      await this.setEmpBranches(r[0].id, branchIds); return r[0];
+    },
+    async setEmpBranches(id, ids) {
+      await rest('employee_branches?employee_id=eq.' + id, { method: 'DELETE' });
+      if (ids.length) await rest('employee_branches', { method: 'POST', body: ids.map(b => ({ employee_id: id, branch_id: b })) });
+    },
+    updEmployee: (id, patch) => rest('employees?id=eq.' + id, { method: 'PATCH', body: patch }),
+    delEmployee: id => rest('employees?id=eq.' + id, { method: 'DELETE' }),
+    async newCode(id) { const c = genCode(); await rest('employees?id=eq.' + id, { method: 'PATCH', body: { join_code: c, user_id: null } }); return c; },
+    attendance(fromIso, toIso) {
+      return rest(`attendance?select=*&at=gte.${encodeURIComponent(fromIso)}&at=lt.${encodeURIComponent(toIso)}&order=at.desc&limit=5000`);
+    }
+  };
+}
+
+/* ====================== الطبقة التجريبية (على الجهاز) ====================== */
+function mockApi() {
+  const KEY = 'att.mock';
+  let db;
+  try { db = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { }
+  if (!db) {
+    const b1 = uid(), e1 = uid(), e2 = uid();
+    db = {
+      branches: [{ id: b1, name: 'الفرع الرئيسي', lat: 30.0444, lng: 31.2357, radius_m: 150, active: true }],
+      employees: [{ id: e1, user_id: null, full_name: 'أحمد محمد', join_code: '111111', active: true, branch_ids: [] },
+      { id: e2, user_id: null, full_name: 'سارة علي', join_code: '222222', active: true, branch_ids: [] }],
+      attendance: [], users: { admin: { pw: 'admin', role: 'admin' } }, session: null
+    };
+  }
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { } };
+  const cur = () => db.users[db.session];
+  const myEmp = () => { const u = cur(); return u && u.empId ? db.employees.find(e => e.id === u.empId && e.active) : null; };
+  const lastOf = id => db.attendance.filter(a => a.employee_id === id).sort((a, b) => b.at.localeCompare(a.at))[0];
+  const err = m => { throw { message: m }; };
+  return {
+    mode: 'mock',
+    hasSession: () => !!db.session,
+    async me() {
+      const u = cur(); if (!u) return null;
+      if (u.role === 'admin') return { role: 'admin', name: 'الأدمن' };
+      const e = myEmp(); return e ? { role: 'employee', emp: e, name: e.full_name } : { role: 'none' };
+    },
+    async signIn(user, pw) { const k = user.toLowerCase(); if (!db.users[k] || db.users[k].pw !== pw) err('Invalid login credentials'); db.session = k; save(); },
+    async codeValid(code) { return db.employees.some(e => e.join_code === code && !e.user_id && e.active); },
+    async signUp(code, user, pw) {
+      if (!(await this.codeValid(code))) err('BAD_CODE');
+      const k = user.toLowerCase(); if (db.users[k]) err('User already registered');
+      const e = db.employees.find(x => x.join_code === code); e.user_id = k;
+      db.users[k] = { pw, role: 'employee', empId: e.id }; db.session = k; save();
+    },
+    async claim(code) {
+      const e = db.employees.find(x => x.join_code === code && !x.user_id && x.active); if (!e) err('BAD_CODE');
+      e.user_id = db.session; cur().empId = e.id; save();
+    },
+    signOut() { db.session = null; save(); },
+    async checkIn(kind, pos) {
+      const e = myEmp(); if (!e) err('NOT_EMPLOYEE');
+      if ((pos.acc || 0) > 150) err('LOW_ACCURACY');
+      const last = lastOf(e.id);
+      if (kind === 'in' && last && last.kind === 'in') err('ALREADY_IN');
+      if (kind === 'out' && (!last || last.kind === 'out')) err('NOT_IN');
+      const allowed = db.branches.filter(b => b.active && (!e.branch_ids.length || e.branch_ids.includes(b.id)));
+      const hits = allowed.map(b => ({ b, d: distM(pos.lat, pos.lng, b.lat, b.lng) })).filter(x => x.d <= x.b.radius_m).sort((a, b) => a.d - b.d);
+      if (!hits.length) {
+        const n = Math.min(...allowed.map(b => distM(pos.lat, pos.lng, b.lat, b.lng)));
+        err('OUTSIDE:' + (isFinite(n) ? Math.round(n) : '?'));
+      }
+      const rec = { id: uid(), employee_id: e.id, branch_id: hits[0].b.id, kind, at: new Date().toISOString(), lat: pos.lat, lng: pos.lng, accuracy_m: pos.acc, distance_m: hits[0].d };
+      db.attendance.push(rec); save(); return rec;
+    },
+    async myHistory(id) { return db.attendance.filter(a => a.employee_id === id).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 60); },
+    async branches() { return db.branches.slice(); },
+    async saveBranch(b) {
+      if (b.id) Object.assign(db.branches.find(x => x.id === b.id), b); else db.branches.push({ ...b, id: uid() });
+      save();
+    },
+    async delBranch(id) { db.branches = db.branches.filter(b => b.id !== id); db.employees.forEach(e => e.branch_ids = e.branch_ids.filter(x => x !== id)); save(); },
+    async employees() { return db.employees.map(e => ({ ...e })); },
+    async addEmployee(name, ids) { const e = { id: uid(), user_id: null, full_name: name, join_code: genCode(), active: true, branch_ids: ids }; db.employees.push(e); save(); return e; },
+    async setEmpBranches(id, ids) { db.employees.find(e => e.id === id).branch_ids = ids; save(); },
+    async updEmployee(id, patch) { Object.assign(db.employees.find(e => e.id === id), patch); save(); },
+    async delEmployee(id) { db.employees = db.employees.filter(e => e.id !== id); db.attendance = db.attendance.filter(a => a.employee_id !== id); save(); },
+    async newCode(id) { const e = db.employees.find(x => x.id === id); e.join_code = genCode(); e.user_id = null; save(); return e.join_code; },
+    async attendance(from, to) { return db.attendance.filter(a => a.at >= from && a.at < to).sort((a, b) => b.at.localeCompare(a.at)); },
+    reset() { localStorage.removeItem(KEY); }
+  };
+}
+const api = REAL ? realApi() : mockApi();
+
+/* ====================== الحالة والرسم ====================== */
+const S = { me: null, tab: 'today', busy: false, msg: null, authMode: 'login', data: {}, clock: null };
+const app = $('#app');
+const setMsg = (type, text) => { S.msg = text ? { type, text } : null; };
+const msgHtml = () => S.msg ? `<div class="msg ${S.msg.type}" role="alert">${esc(S.msg.text)}</div>` : '';
+const demoBar = () => REAL ? '' : `<div class="demo">وضع تجريبي: البيانات على جهازك فقط. دخول الأدمن: <b>admin</b> / <b>admin</b>. أكواد موظفين: 111111 و222222. للتشغيل الحقيقي اتبع دليل الإعداد.</div>`;
+
+async function boot() {
+  try { S.me = api.hasSession() ? await api.me() : null; } catch (e) { S.me = null; api.signOut(); }
+  render();
+}
+
+function render() {
+  clearInterval(S.clock);
+  if (!S.me) return renderAuth();
+  if (S.me.role === 'none') return renderClaim();
+  if (S.me.role === 'admin') return renderAdmin();
+  return renderEmployee();
+}
+
+/* ---------- الدخول ---------- */
+function renderAuth() {
+  const login = S.authMode === 'login';
+  app.innerHTML = `${demoBar()}
+  <header class="top"><h1>الحضور والانصراف</h1></header>
+  <div class="card">
+    <div class="row" style="margin-bottom:6px">
+      <button class="btn ${login ? '' : 'sec'} grow" data-act="mode" data-v="login">تسجيل الدخول</button>
+      <button class="btn ${login ? 'sec' : ''} grow" data-act="mode" data-v="signup">موظف جديد</button>
+    </div>
+    ${msgHtml()}
+    <form id="authForm" autocomplete="on">
+      ${login ? '' : `<label for="code">كود التفعيل (من الأدمن)</label><input id="code" inputmode="numeric" maxlength="6" autocomplete="one-time-code" required>`}
+      <label for="user">${login ? 'اسم المستخدم أو الإيميل' : 'اختار اسم مستخدم (حروف إنجليزي وأرقام)'}</label>
+      <input id="user" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+      <label for="pw">كلمة السر ${login ? '' : '(6 حروف على الأقل)'}</label>
+      <input id="pw" type="password" autocomplete="${login ? 'current-password' : 'new-password'}" ${login ? '' : 'minlength="6"'} required>
+      <div style="margin-top:14px"><button class="btn" style="width:100%" ${S.busy ? 'disabled' : ''}>${login ? 'دخول' : 'إنشاء الحساب'}</button></div>
+    </form>
+  </div>
+  <p class="mut">بتسجيل الحضور، إنت بتوافق إن التطبيق يقرا موقعك لحظة التسجيل فقط، من غير تتبع مستمر.</p>`;
+}
+
+function renderClaim() {
+  app.innerHTML = `<header class="top"><h1>ربط الحساب</h1><button class="btn sec sm" data-act="logout">خروج</button></header>
+  <div class="card"><p>حسابك مش مربوط بموظف. اكتب كود التفعيل اللي الأدمن إداهولك.</p>${msgHtml()}
+  <form id="claimForm"><label for="code">كود التفعيل</label><input id="code" inputmode="numeric" maxlength="6" required>
+  <div style="margin-top:14px"><button class="btn" style="width:100%">ربط</button></div></form></div>`;
+}
+
+/* ---------- شاشة الموظف ---------- */
+function getPosition() {
+  return new Promise((res, rej) => {
+    if (!navigator.geolocation) return rej({ message: 'جهازك أو متصفحك مش بيدعم تحديد الموقع.' });
+    navigator.geolocation.getCurrentPosition(
+      p => res({ lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy }),
+      e => rej({ message: e.code === 1 ? 'لازم تسمح للتطبيق بالوصول للموقع من إعدادات المتصفح، وبعدين جرّب تاني.' : e.code === 3 ? 'استغرق تحديد الموقع وقتًا طويلًا. اطلع مكان مفتوح وجرّب تاني.' : 'مقدرناش نحدد موقعك. شغّل GPS وجرّب تاني.' }),
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+  });
+}
+
+async function renderEmployee() {
+  const e = S.me.emp;
+  let hist = [];
+  try { hist = await api.myHistory(e.id); } catch (er) { setMsg('err', errText(er)); }
+  S.data.hist = hist;
+  const last = hist[0];
+  const isIn = last && last.kind === 'in';
+  const todayRecs = hist.filter(h => dayKey(h.at) === dayKey(Date.now())).slice().reverse();
+  const byDay = {};
+  hist.slice().reverse().forEach(h => { (byDay[dayKey(h.at)] ||= []).push(h); });
+  const days = Object.keys(byDay).sort().reverse().slice(0, 14).map(k => {
+    const rs = byDay[k]; let tot = 0, openAt = null;
+    rs.forEach(r => { if (r.kind === 'in') openAt = new Date(r.at); else if (openAt) { tot += new Date(r.at) - openAt; openAt = null; } });
+    const first = rs.find(r => r.kind === 'in'), lastOut = rs.slice().reverse().find(r => r.kind === 'out');
+    return `<div class="it"><div><b>${fmtDate(rs[0].at)}</b><div class="mut">${first ? 'حضور ' + fmtTime(first.at) : ''}${lastOut ? ' · انصراف ' + fmtTime(lastOut.at) : openAt ? ' · لم ينصرف' : ''}</div></div><span class="mut">${tot ? fmtHours(tot) : ''}</span></div>`;
+  }).join('');
+  app.innerHTML = `${demoBar()}
+  <header class="top"><h1>أهلًا ${esc(e.full_name)}</h1><button class="btn sec sm" data-act="logout">خروج</button></header>
+  ${msgHtml()}
+  <div class="card big">
+    <div class="clock" id="clock"></div>
+    <div>${isIn ? `<span class="pill in">حاضر منذ ${fmtTime(last.at)}</span>` : last ? `<span class="pill out">آخر انصراف ${fmtTime(last.at)} · ${fmtDate(last.at)}</span>` : `<span class="pill out">لا يوجد تسجيل بعد</span>`}</div>
+    <button class="btn bigbtn ${isIn ? 'outb' : ''}" id="punch" data-act="punch" data-kind="${isIn ? 'out' : 'in'}" ${S.busy ? 'disabled' : ''}>${S.busy ? 'جاري تحديد موقعك…' : isIn ? 'تسجيل انصراف' : 'تسجيل حضور'}</button>
+    <div class="mut">هيتقرا موقعك لحظة الضغط فقط، ولازم تكون جوه نطاق الفرع.</div>
+  </div>
+  <div class="card"><h2>تسجيلات النهارده</h2>
+    ${todayRecs.length ? `<div class="list">${todayRecs.map(r => `<div class="it"><span class="pill ${r.kind === 'in' ? 'in' : 'out'}">${r.kind === 'in' ? 'حضور' : 'انصراف'}</span><span>${fmtTime(r.at)}</span><a href="${mapLink(r.lat, r.lng)}" target="_blank" rel="noopener">الموقع</a></div>`).join('')}</div>` : '<div class="mut">لسه مفيش تسجيل النهارده.</div>'}
+  </div>
+  <div class="card"><h2>آخر الأيام</h2>${days ? `<div class="list">${days}</div>` : '<div class="mut">مفيش بيانات.</div>'}</div>`;
+  const tick = () => { const c = $('#clock'); if (c) c.textContent = new Intl.DateTimeFormat('ar-EG', { timeZone: TZ, hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date()); };
+  tick(); S.clock = setInterval(tick, 1000);
+}
+
+async function punch(kind) {
+  S.busy = true; setMsg(); const btn = $('#punch'); if (btn) { btn.disabled = true; btn.textContent = 'جاري تحديد موقعك…'; }
+  try {
+    const pos = await getPosition();
+    if (pos.acc > 150) throw { message: 'LOW_ACCURACY' };
+    await api.checkIn(kind, pos);
+    setMsg('okm', kind === 'in' ? 'تم تسجيل الحضور ✓' : 'تم تسجيل الانصراف ✓');
+  } catch (e) { setMsg('err', errText(e)); }
+  S.busy = false; render();
+}
+
+/* ---------- شاشة الأدمن ---------- */
+const TABS = [['today', 'النهارده'], ['records', 'السجلات'], ['emps', 'الموظفين'], ['branches', 'الفروع']];
+async function renderAdmin() {
+  app.innerHTML = `${demoBar()}<header class="top"><h1>لوحة الأدمن</h1><button class="btn sec sm" data-act="logout">خروج</button></header>
+  ${msgHtml()}<div id="pane"><div class="mut">جاري التحميل…</div></div>
+  <nav class="tabs">${TABS.map(([k, n]) => `<button data-act="tab" data-v="${k}" class="${S.tab === k ? 'on' : ''}">${n}</button>`).join('')}</nav>`;
+  try { await ({ today: paneToday, records: paneRecords, emps: paneEmps, branches: paneBranches })[S.tab](); }
+  catch (e) { $('#pane').innerHTML = `<div class="msg err">${esc(errText(e))}</div>`; }
+}
+
+async function paneToday() {
+  const now = Date.now();
+  const [emps, brs, recs] = await Promise.all([api.employees(), api.branches(), api.attendance(new Date(now - 48 * 3600e3).toISOString(), new Date(now + 3600e3).toISOString())]);
+  const bn = id => (brs.find(b => b.id === id) || {}).name || '—';
+  const act = emps.filter(e => e.active);
+  const rows = act.map(e => {
+    const mine = recs.filter(r => r.employee_id === e.id);
+    const last = mine[0];
+    let st = 'none';
+    if (last && last.kind === 'in') st = 'in';
+    else if (last && dayKey(last.at) === dayKey(now)) st = 'out';
+    const firstIn = mine.slice().reverse().find(r => r.kind === 'in' && dayKey(r.at) === dayKey(now));
+    return { e, last, st, firstIn };
+  }).sort((a, b) => ({ in: 0, out: 1, none: 2 }[a.st] - { in: 0, out: 1, none: 2 }[b.st]) || a.e.full_name.localeCompare(b.e.full_name, 'ar'));
+  const c = k => rows.filter(r => r.st === k).length;
+  $('#pane').innerHTML = `<div class="stat"><div><b>${c('in')}</b>حاضر</div><div><b>${c('out')}</b>انصرف</div><div><b>${c('none')}</b>لم يحضر</div></div>
+  <div class="card" style="margin-top:12px"><div class="row sp"><h2 style="margin:0">${fmtDate(now)}</h2><button class="btn sec sm" data-act="refresh">تحديث</button></div>
+  <div class="list">${rows.length ? rows.map(({ e, last, st, firstIn }) => `<div class="it"><div><b>${esc(e.full_name)}</b>
+    <div class="mut">${last ? `${last.kind === 'in' ? 'حضور' : 'انصراف'} ${fmtTime(last.at)}${dayKey(last.at) !== dayKey(now) ? ' (' + fmtDate(last.at) + ')' : ''} · ${esc(bn(last.branch_id))}` : 'لا يوجد تسجيل'}</div></div>
+    <div class="row"><span class="pill ${st}">${{ in: 'حاضر', out: 'انصرف', none: 'لم يحضر' }[st]}</span>${last ? `<a href="${mapLink(last.lat, last.lng)}" target="_blank" rel="noopener">الموقع</a>` : ''}</div></div>`).join('') : '<div class="mut">أضف موظفين من تبويب «الموظفين».</div>'}</div></div>`;
+}
+
+function monthBounds(m) { // m = "YYYY-MM" بتوقيت التطبيق تقريبًا (±يوم هامش ثم نفلتر بالمفتاح)
+  const [y, mo] = m.split('-').map(Number);
+  return [new Date(Date.UTC(y, mo - 1, 1) - 86400e3).toISOString(), new Date(Date.UTC(y, mo, 1) + 86400e3).toISOString()];
+}
+async function paneRecords() {
+  const m = S.data.month || monthKey(Date.now()), who = S.data.who || '';
+  const [from, to] = monthBounds(m);
+  const [emps, brs, recsAll] = await Promise.all([api.employees(), api.branches(), api.attendance(from, to)]);
+  const recs = recsAll.filter(r => monthKey(r.at) === m && (!who || r.employee_id === who));
+  const nm = id => (emps.find(e => e.id === id) || {}).full_name || '—';
+  const bn = id => (brs.find(b => b.id === id) || {}).name || '—';
+  const tot = {};
+  const asc = recs.slice().reverse(), open = {};
+  asc.forEach(r => {
+    if (r.kind === 'in') open[r.employee_id] = new Date(r.at);
+    else if (open[r.employee_id]) { tot[r.employee_id] = (tot[r.employee_id] || 0) + (new Date(r.at) - open[r.employee_id]); open[r.employee_id] = null; }
+  });
+  S.data.csv = recs.map(r => [nm(r.employee_id), r.kind === 'in' ? 'حضور' : 'انصراف', dayKey(r.at), fmtTime(r.at), bn(r.branch_id), Math.round(r.distance_m || 0), r.lat, r.lng]);
+  $('#pane').innerHTML = `<div class="card"><div class="grid2">
+    <div><label for="fm">الشهر</label><input id="fm" type="month" value="${m}"></div>
+    <div><label for="fw">الموظف</label><select id="fw"><option value="">الكل</option>${emps.map(e => `<option value="${e.id}" ${e.id === who ? 'selected' : ''}>${esc(e.full_name)}</option>`).join('')}</select></div></div>
+    <div class="row" style="margin-top:10px"><button class="btn sec sm" data-act="csv">تصدير CSV</button><span class="mut">${recs.length} تسجيل</span></div></div>
+  <div class="card"><h2>ساعات العمل</h2><div class="list">${Object.keys(tot).length ? Object.keys(tot).sort((a, b) => nm(a).localeCompare(nm(b), 'ar')).map(id => `<div class="it"><span>${esc(nm(id))}</span><b>${fmtHours(tot[id])}</b></div>`).join('') : '<div class="mut">لا توجد ساعات مكتملة (حضور وانصراف) في الشهر ده.</div>'}</div></div>
+  <div class="card"><h2>التسجيلات</h2><div class="scroll"><table><thead><tr><th>الموظف</th><th>النوع</th><th>اليوم</th><th>الوقت</th><th>الفرع</th><th>الموقع</th></tr></thead><tbody>
+  ${recs.map(r => `<tr><td>${esc(nm(r.employee_id))}</td><td><span class="pill ${r.kind === 'in' ? 'in' : 'out'}">${r.kind === 'in' ? 'حضور' : 'انصراف'}</span></td><td>${dayKey(r.at)}</td><td>${fmtTime(r.at)}</td><td>${esc(bn(r.branch_id))}</td><td><a href="${mapLink(r.lat, r.lng)}" target="_blank" rel="noopener">خريطة</a></td></tr>`).join('') || '<tr><td colspan="6" class="mut">لا توجد تسجيلات.</td></tr>'}
+  </tbody></table></div></div>`;
+}
+
+async function paneEmps() {
+  const [emps, brs] = await Promise.all([api.employees(), api.branches()]);
+  S.data.emps = emps; S.data.brs = brs;
+  const bnames = e => e.branch_ids.length ? e.branch_ids.map(i => (brs.find(b => b.id === i) || {}).name).filter(Boolean).join('، ') : 'كل الفروع';
+  $('#pane').innerHTML = `<div class="card"><h2>إضافة موظف</h2>
+    <form id="empForm"><label for="en">الاسم</label><input id="en" required maxlength="60">
+    <label>الفروع المسموحة (لو ما اخترتش = كل الفروع)</label>${brs.length ? brs.map(b => `<label class="chk"><input type="checkbox" name="eb" value="${b.id}"> ${esc(b.name)}</label>`).join('') : '<div class="mut">أضف فرع الأول من تبويب «الفروع».</div>'}
+    <div style="margin-top:12px"><button class="btn" ${brs.length ? '' : 'disabled'}>إضافة وتوليد كود</button></div></form></div>
+  <div class="card"><h2>الموظفين (${emps.length})</h2><div class="list">${emps.map(e => `<div class="it" style="align-items:flex-start"><div class="grow"><b>${esc(e.full_name)}</b> ${e.active ? '' : '<span class="pill none">موقوف</span>'}
+    <div class="mut">${esc(bnames(e))}</div>
+    <div class="mut">${e.user_id ? 'الحساب مفعّل' : `كود التفعيل: <span class="code" style="font-size:16px">${esc(e.join_code)}</span>`}</div></div>
+    <div class="row"><button class="btn sec sm" data-act="empEdit" data-id="${e.id}">تعديل</button></div></div>`).join('') || '<div class="mut">لا يوجد موظفين.</div>'}</div></div>`;
+}
+
+async function paneBranches() {
+  const brs = await api.branches(); S.data.brs = brs;
+  $('#pane').innerHTML = `<div class="card"><div class="row sp"><h2 style="margin:0">الفروع (${brs.length})</h2><button class="btn sm" data-act="brEdit" data-id="">+ فرع</button></div>
+  <div class="list">${brs.map(b => `<div class="it"><div><b>${esc(b.name)}</b> ${b.active ? '' : '<span class="pill none">موقوف</span>'}<div class="mut">نطاق ${b.radius_m} متر · <a href="${mapLink(b.lat, b.lng)}" target="_blank" rel="noopener">الخريطة</a></div></div>
+  <button class="btn sec sm" data-act="brEdit" data-id="${b.id}">تعديل</button></div>`).join('') || '<div class="mut">لسه مفيش فروع. أضف أول فرع وحدد موقعه.</div>'}</div></div>`;
+}
+
+/* ---------- نوافذ التعديل ---------- */
+function dlg(html) {
+  let d = $('#dlg'); if (d) d.remove();
+  d = document.createElement('dialog'); d.id = 'dlg'; d.innerHTML = html; document.body.appendChild(d);
+  d.addEventListener('click', e => { if (e.target === d) d.close(); });
+  d.addEventListener('close', () => d.remove());
+  d.showModal(); return d;
+}
+function editBranch(id) {
+  const b = (S.data.brs || []).find(x => x.id === id) || { name: '', lat: '', lng: '', radius_m: 150, active: true };
+  const d = dlg(`<h2 style="margin-top:0">${id ? 'تعديل فرع' : 'فرع جديد'}</h2><div id="dmsg"></div>
+  <form id="brForm"><label for="bn">اسم الفرع</label><input id="bn" required value="${esc(b.name)}">
+  <button type="button" class="btn sec" style="width:100%;margin-top:10px" data-act="useLoc">استخدم موقعي الحالي (وأنا واقف في الفرع)</button>
+  <div class="grid2"><div><label for="bla">خط العرض</label><input id="bla" inputmode="decimal" required value="${esc(b.lat)}"></div><div><label for="blo">خط الطول</label><input id="blo" inputmode="decimal" required value="${esc(b.lng)}"></div></div>
+  <div class="mut" style="margin-top:6px">تقدر تنسخ الإحداثيات من خرائط جوجل (اضغط مطوّلًا على المكان).</div>
+  <label for="br">نطاق التسجيل بالمتر (20 – 5000)</label><input id="br" type="number" min="20" max="5000" required value="${esc(b.radius_m)}">
+  <label class="chk"><input id="ba" type="checkbox" ${b.active ? 'checked' : ''}> الفرع نشط</label>
+  <div class="row" style="margin-top:14px"><button class="btn grow">حفظ</button>${id ? `<button type="button" class="btn bad" data-act="brDel" data-id="${id}">حذف</button>` : ''}<button type="button" class="btn sec" data-act="close">إلغاء</button></div></form>`);
+  d.querySelector('#brForm').dataset.id = id || '';
+}
+function editEmp(id) {
+  const e = S.data.emps.find(x => x.id === id), brs = S.data.brs;
+  dlg(`<h2 style="margin-top:0">تعديل: ${esc(e.full_name)}</h2><div id="dmsg"></div>
+  <form id="emForm" data-id="${id}"><label for="emn">الاسم</label><input id="emn" required value="${esc(e.full_name)}">
+  <label>الفروع المسموحة (لو ما اخترتش = كل الفروع)</label>${brs.map(b => `<label class="chk"><input type="checkbox" name="eb" value="${b.id}" ${e.branch_ids.includes(b.id) ? 'checked' : ''}> ${esc(b.name)}</label>`).join('')}
+  <label class="chk"><input id="ema" type="checkbox" ${e.active ? 'checked' : ''}> الموظف نشط</label>
+  <div class="row" style="margin-top:14px"><button class="btn grow">حفظ</button><button type="button" class="btn sec" data-act="empCode" data-id="${id}">كود جديد / فك الربط</button></div>
+  <div class="row" style="margin-top:10px"><button type="button" class="btn bad" data-act="empDel" data-id="${id}">حذف الموظف وسجلاته</button><button type="button" class="btn sec" data-act="close">إلغاء</button></div></form>`);
+}
+
+/* ====================== الأحداث ====================== */
+const dmsg = (t, ty = 'err') => { const m = $('#dmsg'); if (m) m.innerHTML = t ? `<div class="msg ${ty}">${esc(t)}</div>` : ''; };
+const closeDlg = () => { const d = $('#dlg'); if (d) d.close(); };
+const refreshAdmin = async () => { closeDlg(); await renderAdmin(); };
+
+document.addEventListener('click', async ev => {
+  const t = ev.target.closest('[data-act]'); if (!t) return;
+  const a = t.dataset.act, id = t.dataset.id, v = t.dataset.v;
+  try {
+    if (a === 'mode') { S.authMode = v; setMsg(); renderAuth(); }
+    else if (a === 'logout') { api.signOut(); S.me = null; S.tab = 'today'; setMsg(); render(); }
+    else if (a === 'punch') await punch(t.dataset.kind);
+    else if (a === 'tab') { S.tab = v; setMsg(); renderAdmin(); }
+    else if (a === 'refresh') renderAdmin();
+    else if (a === 'close') closeDlg();
+    else if (a === 'brEdit') editBranch(id);
+    else if (a === 'empEdit') editEmp(id);
+    else if (a === 'useLoc') {
+      t.disabled = true; t.textContent = 'جاري تحديد الموقع…';
+      try { const p = await getPosition(); $('#bla').value = p.lat.toFixed(6); $('#blo').value = p.lng.toFixed(6); dmsg(`تم أخذ موقعك (دقة حوالي ${Math.round(p.acc)} متر).`, 'okm'); }
+      catch (e) { dmsg(errText(e)); }
+      t.disabled = false; t.textContent = 'استخدم موقعي الحالي (وأنا واقف في الفرع)';
+    }
+    else if (a === 'brDel') { if (confirm('حذف الفرع؟ التسجيلات القديمة هتفضل لكن من غير اسم فرع.')) { await api.delBranch(id); await refreshAdmin(); } }
+    else if (a === 'empDel') { if (confirm('حذف الموظف وكل تسجيلاته نهائيًا؟ لو عايز توقفه بس، شيل علامة «نشط».')) { await api.delEmployee(id); await refreshAdmin(); } }
+    else if (a === 'empCode') { const c = await api.newCode(id); dmsg('الكود الجديد: ' + c + ' (الحساب القديم اتفك ارتباطه)', 'okm'); }
+    else if (a === 'csv') {
+      const rows = [['الموظف', 'النوع', 'اليوم', 'الوقت', 'الفرع', 'المسافة من الفرع (م)', 'lat', 'lng'], ...(S.data.csv || [])];
+      const csv = '﻿' + rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\r\n');
+      const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+      const l = document.createElement('a'); l.href = url; l.download = 'attendance-' + (S.data.month || monthKey(Date.now())) + '.csv'; l.click(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+    }
+  } catch (e) { dmsg(errText(e)); if (!$('#dmsg')) { setMsg('err', errText(e)); render(); } }
+});
+
+document.addEventListener('change', ev => {
+  if (ev.target.id === 'fm') { S.data.month = ev.target.value || undefined; renderAdmin(); }
+  if (ev.target.id === 'fw') { S.data.who = ev.target.value; renderAdmin(); }
+});
+
+document.addEventListener('submit', async ev => {
+  ev.preventDefault();
+  const f = ev.target;
+  try {
+    if (f.id === 'authForm') {
+      S.busy = true; setMsg();
+      const user = $('#user').value.trim(), pw = $('#pw').value;
+      if (!validUser(user)) { S.busy = false; setMsg('err', 'اسم المستخدم لازم يكون 3–30 حرف إنجليزي أو أرقام.'); return renderAuth(); }
+      if (S.authMode === 'login') await api.signIn(user, pw); else await api.signUp($('#code').value.trim(), user, pw);
+      S.me = await api.me(); S.busy = false; setMsg(); render();
+    } else if (f.id === 'claimForm') {
+      await api.claim($('#code').value.trim()); S.me = await api.me(); setMsg(); render();
+    } else if (f.id === 'empForm') {
+      const ids = [...f.querySelectorAll('input[name=eb]:checked')].map(i => i.value);
+      const e = await api.addEmployee($('#en').value.trim(), ids);
+      setMsg('okm', `تمت إضافة ${e.full_name}. كود التفعيل: ${e.join_code} (ابعته له)`); await renderAdmin();
+    } else if (f.id === 'brForm') {
+      const lat = parseFloat($('#bla').value.replace(',', '.')), lng = parseFloat($('#blo').value.replace(',', '.')), r = parseInt($('#br').value, 10);
+      if (!(lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180)) return dmsg('الإحداثيات مش صحيحة.');
+      if (!(r >= 20 && r <= 5000)) return dmsg('النطاق لازم يكون بين 20 و5000 متر.');
+      await api.saveBranch({ id: f.dataset.id || undefined, name: $('#bn').value.trim(), lat, lng, radius_m: r, active: $('#ba').checked });
+      await refreshAdmin();
+    } else if (f.id === 'emForm') {
+      const id = f.dataset.id, ids = [...f.querySelectorAll('input[name=eb]:checked')].map(i => i.value);
+      await api.updEmployee(id, { full_name: $('#emn').value.trim(), active: $('#ema').checked });
+      await api.setEmpBranches(id, ids); await refreshAdmin();
+    }
+  } catch (e) {
+    S.busy = false;
+    if ($('#dlg')) dmsg(errText(e)); else { setMsg('err', errText(e)); render(); }
+  }
+});
+
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => { });
+boot();
+</script>
+</body>
+</html>
