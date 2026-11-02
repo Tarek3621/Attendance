@@ -81,6 +81,8 @@ const CFG = window.APP_CONFIG || {};
 const REAL = !!(CFG.SUPABASE_URL && CFG.SUPABASE_ANON_KEY);
 const TZ = CFG.TIMEZONE || 'Africa/Cairo';
 const EMAIL_DOMAIN = 'staff.example.com';
+const VER = 'النسخة 5';
+const verTag = () => `<div class="mut" style="text-align:center;font-size:12px;margin:16px 0 0">${VER}</div>`;
 // أنواع الإجازات اللي بتتخصم من الرصيد (تقدر تغيّرها من config.js بـ LEAVE_DEDUCT)
 const DEDUCT = CFG.LEAVE_DEDUCT || ['regular', 'casual'];
 const LEAVE = { regular: 'اعتيادية', casual: 'عارضة', company: 'طلب الشركة', sick: 'مرضية' };
@@ -114,7 +116,7 @@ const ERR = {
   BAD_CODE: 'الكود غلط أو اتستخدم قبل كده.',
   NOT_EMPLOYEE: 'حسابك مش مربوط بموظف مفعّل. كلّم الأدمن.',
   ALREADY_IN: 'إنت مسجّل حضور بالفعل. حدّث الصفحة وجرّب تاني.',
-  NOT_IN: 'العملية دي مش متاحة في حالتك الحالية. حدّث الصفحة وجرّب تاني.',
+  NOT_IN: 'مفيش حضور مفتوح دلوقتي (ممكن يكون اتقفل تلقائيًا بعد 10 ساعات عمل). حدّث الصفحة وجرّب تاني.',
   NOT_ON_BREAK: 'إنت مش في استراحة دلوقتي.',
   GROUP_LOCKED: 'تم تسجيل حضورك جماعيًا النهارده، فالحضور الفردي مقفول لباقي اليوم. المدير هو اللي يسجّل حضورك.',
   NOT_MANAGER: 'الصلاحية دي لمديري المواقع اللي حددهم الأدمن.',
@@ -166,6 +168,8 @@ function realApi() {
     catch (e) { save(null); throw e; }
   }
   const rest = (p, o) => raw('/rest/v1/' + p, o);
+  let lastAC = 0;
+  const autoClose = async () => { if (Date.now() - lastAC < 30000) return; lastAC = Date.now(); try { await raw('/rest/v1/rpc/auto_close_all', { method: 'POST', body: {} }); } catch (e) { } };
   const rpc = (n, b, authed = true) => raw('/rest/v1/rpc/' + n, { method: 'POST', body: b || {} }, authed);
 
   return {
@@ -192,7 +196,7 @@ function realApi() {
     async claim(code) { await rpc('claim_employee', { p_code: code }); },
     signOut() { save(null); },
     async checkIn(kind, pos, address, note) { return rpc('check_in', { p_kind: kind, p_lat: pos.lat, p_lng: pos.lng, p_accuracy: pos.acc, p_address: address || '', p_note: note || '' }); },
-    async myHistory(empId) { return rest('attendance?select=*&employee_id=eq.' + empId + '&order=at.desc&limit=200'); },
+    async myHistory(empId) { await autoClose(); return rest('attendance?select=*&employee_id=eq.' + empId + '&order=at.desc&limit=200'); },
     async employees() { return rest('employees?select=*&order=created_at'); },
     async addEmployee(name, balance) {
       const r = await rest('employees', { method: 'POST', headers: { Prefer: 'return=representation' }, body: { full_name: name, join_code: genCode(), leave_balance: balance || 0 } });
@@ -215,7 +219,8 @@ function realApi() {
     decideLeave: (id, status, days, note) => rpc('decide_leave', { p_id: id, p_status: status, p_days: days, p_note: note || '' }),
     addLeave: (emp, kind, from, to, days, note) => rpc('admin_add_leave', { p_emp: emp, p_kind: kind, p_from: from, p_to: to, p_days: days || 0, p_note: note || '' }),
     delLeave: id => rpc('delete_leave', { p_id: id }),
-    attendance(fromIso, toIso) {
+    async attendance(fromIso, toIso) {
+      await autoClose();
       return rest(`attendance?select=*&at=gte.${encodeURIComponent(fromIso)}&at=lt.${encodeURIComponent(toIso)}&order=at.desc&limit=5000`);
     }
   };
@@ -240,6 +245,21 @@ function mockApi() {
   const myEmp = () => { const u = cur(); return u && u.empId ? db.employees.find(e => e.id === u.empId && e.active) : null; };
   const lastOf = id => db.attendance.filter(a => a.employee_id === id).sort((a, b) => b.at.localeCompare(a.at))[0];
   const err = m => { throw { message: m }; };
+  function autoClose() {
+    const now = Date.now(), MAX = 10 * 3600e3;
+    db.employees.forEach(e => {
+      const recs = db.attendance.filter(a => a.employee_id === e.id).sort((a, b) => a.at.localeCompare(b.at));
+      const last = recs[recs.length - 1]; if (!last || !(last.kind === 'in' || last.kind === 'break_end')) return;
+      let si = 0; recs.forEach((r, i) => { if (r.kind === 'in') si = i; });
+      let worked = 0, resume = null;
+      for (const r of recs.slice(si)) { const t = Date.parse(r.at);
+        if (r.kind === 'in') resume = t; else if (r.kind === 'break_start') { if (resume != null) { worked += t - resume; resume = null; } }
+        else if (r.kind === 'break_end') resume = t; else if (r.kind === 'out') { resume = null; worked = 0; } }
+      if (resume != null && worked + (now - resume) >= MAX)
+        db.attendance.push({ id: uid(), employee_id: e.id, kind: 'out', at: new Date(resume + (MAX - worked)).toISOString(), lat: last.lat, lng: last.lng, accuracy_m: last.accuracy_m, address: last.address, note: 'انصراف تلقائي بعد 10 ساعات عمل (بدون تسجيل من الموظف)', auto: true, recorded_by: null, recorded_by_name: '' });
+    });
+    save();
+  }
   return {
     mode: 'mock',
     hasSession: () => !!db.session,
@@ -264,6 +284,7 @@ function mockApi() {
     async checkIn(kind, pos, address, note) {
       const e = myEmp(); if (!e) err('NOT_EMPLOYEE');
       if ((pos.acc || 0) > 300) err('LOW_ACCURACY');
+      autoClose();
       const last = lastOf(e.id);
       const st = !last ? 'out' : (last.kind === 'in' || last.kind === 'break_end') ? 'in' : last.kind === 'break_start' ? 'break' : 'out';
       if (kind === 'in' && st !== 'out') err('ALREADY_IN');
@@ -276,7 +297,7 @@ function mockApi() {
       const rec = { id: uid(), employee_id: e.id, kind, at: new Date().toISOString(), lat: pos.lat, lng: pos.lng, accuracy_m: pos.acc, address: addr.slice(0, 300), note: (note || '').trim().slice(0, 300), recorded_by: null, recorded_by_name: '' };
       db.attendance.push(rec); save(); return rec;
     },
-    async myHistory(id) { return db.attendance.filter(a => a.employee_id === id).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 200); },
+    async myHistory(id) { autoClose(); return db.attendance.filter(a => a.employee_id === id).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 200); },
     async employees() { return db.employees.map(e => ({ ...e })); },
     async addEmployee(name, balance) { const e = { id: uid(), user_id: null, full_name: name, join_code: genCode(), active: true, leave_balance: balance || 0, leave_from: new Date().getFullYear() + '-01-01' }; db.employees.push(e); save(); return e; },
     async updEmployee(id, patch) { Object.assign(db.employees.find(e => e.id === id), patch); save(); },
@@ -284,7 +305,8 @@ function mockApi() {
     async newCode(id) { const e = db.employees.find(x => x.id === id); e.join_code = genCode(); e.user_id = null; save(); return e.join_code; },
     async team() {
       const m = myEmp(); if (!m || !m.is_manager) err('NOT_MANAGER');
-      return db.team.filter(t => t.manager_id === m.id).map(t => db.employees.find(e => e.id === t.member_id)).filter(e => e && e.active).map(e => {
+      autoClose();
+      return db.employees.filter(e => e.active && e.id !== m.id).map(e => {
         const l = lastOf(e.id);
         return { id: e.id, full_name: e.full_name, last_kind: l ? l.kind : null, last_at: l ? l.at : null, last_address: l ? l.address : null, state: !l ? 'out' : (l.kind === 'in' || l.kind === 'break_end') ? 'in' : l.kind === 'break_start' ? 'break' : 'out',
           group_today: db.attendance.some(a => a.employee_id === e.id && a.kind === 'in' && a.recorded_by && dayKey(a.at) === dayKey(Date.now())) };
@@ -297,10 +319,11 @@ function mockApi() {
       const addr = (address || '').trim(); if (addr.length < 3) err('ADDRESS_REQUIRED');
       if (!ids || !ids.length) err('NO_MEMBERS');
       let done = 0; const skipped = [];
+      autoClose();
       for (const id of [...new Set(ids)]) {
         const mem = db.employees.find(e => e.id === id && e.active);
         let reason = null;
-        if (!mem || !db.team.some(t => t.manager_id === m.id && t.member_id === id)) reason = 'NOT_MEMBER';
+        if (!mem || mem.id === m.id) reason = 'NOT_MEMBER';
         else {
           const l = lastOf(id), st = !l ? 'out' : (l.kind === 'in' || l.kind === 'break_end') ? 'in' : l.kind === 'break_start' ? 'break' : 'out';
           if (st === 'break') reason = 'ON_BREAK'; else if (kind === 'in' && st !== 'out') reason = 'ALREADY_IN'; else if (kind === 'out' && st !== 'in') reason = 'NOT_IN';
@@ -336,7 +359,7 @@ function mockApi() {
       db.leaves.push(r); save(); return r;
     },
     async delLeave(id) { if (cur().role !== 'admin') err('NOT_ADMIN'); db.leaves = db.leaves.filter(l => l.id !== id); save(); },
-    async attendance(from, to) { return db.attendance.filter(a => a.at >= from && a.at < to).sort((a, b) => b.at.localeCompare(a.at)); },
+    async attendance(from, to) { autoClose(); return db.attendance.filter(a => a.at >= from && a.at < to).sort((a, b) => b.at.localeCompare(a.at)); },
     reset() { localStorage.removeItem(KEY); }
   };
 }
@@ -382,7 +405,7 @@ function renderAuth() {
       <div style="margin-top:14px"><button class="btn" style="width:100%" ${S.busy ? 'disabled' : ''}>${login ? 'دخول' : 'إنشاء الحساب'}</button></div>
     </form>
   </div>
-  <p class="mut">بتسجيل الحضور، إنت بتوافق إن التطبيق يقرا موقعك لحظة التسجيل فقط، من غير تتبع مستمر.</p>`;
+  <p class="mut">بتسجيل الحضور، إنت بتوافق إن التطبيق يقرا موقعك لحظة التسجيل فقط، من غير تتبع مستمر.</p>${verTag()}`;
 }
 
 function renderClaim() {
@@ -409,7 +432,7 @@ function calc(recsAsc, nowMs) {
   return { work, brk, open: st != null || bs != null };
 }
 const kindPill = k => `<span class="pill ${KIND[k][1]}">${KIND[k][0]}</span>`;
-const recLine = r => `<div class="it" style="align-items:flex-start"><div class="grow">${kindPill(r.kind)} <b>${fmtTime(r.at)}</b>
+const recLine = r => `<div class="it" style="align-items:flex-start"><div class="grow">${kindPill(r.kind)} ${r.auto ? '<span class="pill brk">تلقائي</span>' : ''} <b>${fmtTime(r.at)}</b>
   <div>${esc(r.address || '—')}</div>${r.recorded_by_name ? `<div class="mut">سجّله جماعيًا: ${esc(r.recorded_by_name)}</div>` : ''}${r.note ? `<div class="mut">${esc(r.note)}</div>` : ''}</div><a href="${mapLink(r.lat, r.lng)}" target="_blank" rel="noopener">الموقع</a></div>`;
 const rememberAddr = a => { try { const l = JSON.parse(localStorage.getItem('att.addr') || '[]').filter(x => x !== a); l.unshift(a); localStorage.setItem('att.addr', JSON.stringify(l.slice(0, 10))); } catch (e) { } };
 const recentAddr = () => { try { return JSON.parse(localStorage.getItem('att.addr') || '[]'); } catch (e) { return []; } };
@@ -428,7 +451,9 @@ function getPosition() {
 async function renderEmployee() {
   if (S.etab === 'leaves') return renderEmpLeaves();
   if (S.etab === 'team') return renderEmpTeam();
-  const e = S.me.emp;
+  let leaves = [];
+  try { S.me = await api.me(); leaves = await api.leaves(); } catch (er) { }
+  const e = S.me.emp, lb = balanceOf(e, leaves), lpend = leaves.filter(l => l.status === 'pending').length;
   let hist = [];
   try { hist = await api.myHistory(e.id); } catch (er) { setMsg('err', errText(er)); }
   const last = hist[0], st = stateOf(last), now = Date.now();
@@ -463,10 +488,11 @@ async function renderEmployee() {
     ${btns}
     <div class="mut">موقعك بيتقرا لحظة الضغط فقط. تقدر تسجّل حضور وانصراف أكتر من مرة في اليوم (كل ما تنتقل لموقع).</div>
   </div>
+  <div class="card"><div class="row sp"><div><h2 style="margin:0 0 4px">إجازاتي</h2><div class="mut">المتبقي <b>${nDays(lb.remaining)}</b> من ${nDays(lb.initial)} يوم${lpend ? ' · ' + nDays(lpend) + ' طلب قيد المراجعة' : ''}</div></div><button class="btn" data-act="etab" data-v="leaves">طلب إجازة</button></div></div>
   <div class="card"><h2>تسجيلات النهارده</h2>
     ${todayRecs.length ? `<div class="list">${todayRecs.map(recLine).join('')}</div>` : '<div class="mut">لسه مفيش تسجيل النهارده.</div>'}
   </div>
-  <div class="card"><h2>آخر الأيام</h2>${days ? `<div class="list">${days}</div>` : '<div class="mut">مفيش بيانات.</div>'}</div>${empNav()}`;
+  <div class="card"><h2>آخر الأيام</h2>${days ? `<div class="list">${days}</div>` : '<div class="mut">مفيش بيانات.</div>'}</div>${verTag()}${empNav()}`;
   const tick = () => { const c = $('#clock'); if (c) c.textContent = new Intl.DateTimeFormat('ar-EG', { timeZone: TZ, hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date()); };
   tick(); S.clock = setInterval(tick, 1000);
 }
@@ -492,7 +518,7 @@ async function punch(kind) {
 const TABS = [['today', 'النهارده'], ['reports', 'التقارير'], ['leaves', 'الإجازات'], ['records', 'السجلات'], ['emps', 'الموظفين']];
 async function renderAdmin() {
   app.innerHTML = `${demoBar()}<header class="top"><h1>لوحة الأدمن</h1><button class="btn sec sm" data-act="logout">خروج</button></header>
-  ${msgHtml()}<div id="pane"><div class="mut">جاري التحميل…</div></div>
+  ${msgHtml()}<div id="pane"><div class="mut">جاري التحميل…</div></div>${verTag()}
   <nav class="tabs">${TABS.map(([k, n]) => `<button data-act="tab" data-v="${k}" class="${S.tab === k ? 'on' : ''}">${n}</button>`).join('')}</nav>`;
   try { await ({ today: paneToday, reports: paneReports, leaves: paneLeaves, records: paneRecords, emps: paneEmps })[S.tab](); }
   catch (e) { $('#pane').innerHTML = `<div class="msg err">${esc(errText(e))}</div>`; }
@@ -547,20 +573,20 @@ async function paneRecords() {
     <div class="row" style="margin-top:10px"><button class="btn sec sm" data-act="csv">تصدير CSV</button><span class="mut">${recs.length} تسجيل</span></div></div>
   <div class="card"><h2>ساعات العمل (بدون الاستراحة)</h2><div class="list">${tot.length ? tot.map(t => `<div class="it"><div>${esc(nm(t.id))}<div class="mut">استراحة ${fmtHours(t.brk)}${t.open ? ' · فيه فترة مفتوحة' : ''}</div></div><b>${fmtHours(t.work)}</b></div>`).join('') : '<div class="mut">لا توجد بيانات.</div>'}</div></div>
   <div class="card"><h2>التسجيلات</h2><div class="scroll"><table><thead><tr><th>الموظف</th><th>النوع</th><th>اليوم</th><th>الوقت</th><th>العنوان</th><th>ملاحظة</th><th>الموقع</th></tr></thead><tbody>
-  ${recs.map(r => `<tr><td>${esc(nm(r.employee_id))}</td><td>${kindPill(r.kind)}</td><td>${dayKey(r.at)}</td><td>${fmtTime(r.at)}</td><td style="white-space:normal;min-width:160px">${esc(r.address)}${r.recorded_by_name ? `<div class="mut">جماعي: ${esc(r.recorded_by_name)}</div>` : ''}</td><td style="white-space:normal">${esc(r.note)}</td><td><a href="${mapLink(r.lat, r.lng)}" target="_blank" rel="noopener">خريطة</a></td></tr>`).join('') || '<tr><td colspan="7" class="mut">لا توجد تسجيلات.</td></tr>'}
+  ${recs.map(r => `<tr><td>${esc(nm(r.employee_id))}</td><td>${kindPill(r.kind)}</td><td>${dayKey(r.at)}</td><td>${fmtTime(r.at)}</td><td style="white-space:normal;min-width:160px">${esc(r.address)}${r.auto ? '<div class="mut">انصراف تلقائي</div>' : ''}${r.recorded_by_name ? `<div class="mut">جماعي: ${esc(r.recorded_by_name)}</div>` : ''}</td><td style="white-space:normal">${esc(r.note)}</td><td><a href="${mapLink(r.lat, r.lng)}" target="_blank" rel="noopener">خريطة</a></td></tr>`).join('') || '<tr><td colspan="7" class="mut">لا توجد تسجيلات.</td></tr>'}
   </tbody></table></div></div>`;
 }
 
 async function paneEmps() {
-  const [emps, leaves, links] = await Promise.all([api.employees(), api.leaves(), api.teamLinks()]);
-  S.data.emps = emps; S.data.leaves = leaves; S.data.links = links;
+  const [emps, leaves] = await Promise.all([api.employees(), api.leaves()]);
+  S.data.emps = emps; S.data.leaves = leaves;
   $('#pane').innerHTML = `<div class="card"><h2>إضافة موظف</h2>
     <form id="empForm"><label for="en">الاسم</label><input id="en" required maxlength="60">
     <label for="eb">الرصيد الابتدائي للإجازات (أيام)</label><input id="eb" type="number" min="0" step="0.5" value="21" required>
     <div style="margin-top:12px"><button class="btn">إضافة وتوليد كود</button></div></form></div>
   <div class="card"><h2>الموظفين (${emps.length})</h2><div class="list">${emps.map(e => { const b = balanceOf(e, leaves); return `<div class="it" style="align-items:flex-start"><div class="grow"><b>${esc(e.full_name)}</b> ${e.active ? '' : '<span class="pill none">موقوف</span>'}
     <div class="mut">${e.user_id ? 'الحساب مفعّل' : `كود التفعيل: <span class="code" style="font-size:16px">${esc(e.join_code)}</span>`}</div>
-    <div class="mut">رصيد الإجازات: ${nDays(b.remaining)} من ${nDays(b.initial)} يوم</div>${e.is_manager ? `<div class="mut">مدير موقع · فريقه ${links.filter(l => l.manager_id === e.id).length} موظف</div>` : ''}</div>
+    <div class="mut">رصيد الإجازات: ${nDays(b.remaining)} من ${nDays(b.initial)} يوم</div>${e.is_manager ? '<div class="mut">مدير موقع (يثبّت حضور جماعي)</div>' : ''}</div>
     <div class="row"><button class="btn sec sm" data-act="empEdit" data-id="${e.id}">تعديل</button></div></div>`; }).join('') || '<div class="mut">لا يوجد موظفين.</div>'}</div></div>`;
 }
 
@@ -616,14 +642,15 @@ async function renderEmpTeam() {
   ${msgHtml()}
   <div class="card">
     <div class="row"><button class="btn grow ${mode === 'in' ? '' : 'sec'}" data-act="gmode" data-v="in">حضور جماعي</button><button class="btn grow ${mode === 'out' ? '' : 'sec'}" data-act="gmode" data-v="out">انصراف جماعي</button></div>
-    <div class="mut" style="margin-top:8px">هيتسجّل موقعك الحالي (GPS) والعنوان اللي هتكتبه لكل الموظفين المختارين. ${mode === 'in' ? 'بعد الحضور الجماعي، الحضور الفردي بيتقفل لهم لباقي اليوم.' : 'الانصراف متاح للمختارين اللي حضورهم مسجّل.'}</div>
+    <div class="mut" style="margin-top:8px">اختار أي موظفين من الكل. هيتسجّل موقعك الحالي (GPS) والعنوان اللي هتكتبه لكل المختارين. ${mode === 'in' ? 'بعد الحضور الجماعي، الحضور الفردي بيتقفل لهم لباقي اليوم.' : 'الانصراف متاح للمختارين اللي حضورهم مسجّل.'}</div>
   </div>
   <form id="teamForm" class="card">
-    <div class="row sp"><h2 style="margin:0">اختار الموظفين (${team.length})</h2>${elig.length ? '<button type="button" class="btn sec sm" data-act="gall">تحديد الكل</button>' : ''}</div>
+    <div class="row sp"><h2 style="margin:0">اختار الموظفين (${elig.length} متاح من ${team.length})</h2>${elig.length ? '<button type="button" class="btn sec sm" data-act="gall">تحديد الكل</button>' : ''}</div>
+    ${team.length > 6 ? '<input id="gsearch" type="search" placeholder="ابحث بالاسم…" style="margin-top:10px" autocomplete="off">' : ''}
     <div class="list">${team.length ? team.map(m => {
       const ok = m.state === want;
-      return `<label class="it chk" style="${ok ? '' : 'opacity:.55'}"><span class="row" style="gap:10px"><input type="checkbox" name="gm" value="${m.id}" ${ok ? '' : 'disabled'}><span><b>${esc(m.full_name)}</b>
-        <div class="mut">${m.last_address ? esc(m.last_address) + ' · ' + fmtTime(m.last_at) : 'لا يوجد تسجيل'}${m.group_today ? ' · مسجّل جماعيًا اليوم' : ''}</div></span></span><span class="pill ${m.state === 'in' ? 'in' : m.state === 'break' ? 'brk' : 'out'}">${stLbl[m.state]}</span></label>`; }).join('') : '<div class="mut">مفيش موظفين في فريقك. الأدمن هو اللي بيحدد فريقك.</div>'}</div>
+      return `<label class="it chk" data-name="${esc(m.full_name)}" style="${ok ? '' : 'opacity:.55'}"><span class="row" style="gap:10px"><input type="checkbox" name="gm" value="${m.id}" ${ok ? '' : 'disabled'}><span><b>${esc(m.full_name)}</b>
+        <div class="mut">${m.last_address ? esc(m.last_address) + ' · ' + fmtTime(m.last_at) : 'لا يوجد تسجيل'}${m.group_today ? ' · مسجّل جماعيًا اليوم' : ''}</div></span></span><span class="pill ${m.state === 'in' ? 'in' : m.state === 'break' ? 'brk' : 'out'}">${stLbl[m.state]}</span></label>`; }).join('') : '<div class="mut">مفيش موظفين نشطين.</div>'}</div>
     ${team.length ? `<label for="gaddr">عنوان الموقع (إجباري)</label><input id="gaddr" list="addrList" maxlength="300" placeholder="مثال: موقع مشروع العاصمة الإدارية" autocomplete="off" value="${esc(S.data.gaddr || '')}">
     <datalist id="addrList">${recentAddr().map(a => `<option value="${esc(a)}">`).join('')}</datalist>
     <label for="gnote">ملاحظة (اختياري)</label><input id="gnote" maxlength="300">
@@ -764,8 +791,7 @@ function editEmp(id) {
   <div class="grid2"><div><label for="emb">الرصيد الابتدائي (أيام)</label><input id="emb" type="number" min="0" step="0.5" value="${e.leave_balance ?? 0}" required></div>
   <div><label for="emf">يُحسب الخصم من تاريخ</label><input id="emf" type="date" value="${e.leave_from || ''}" required></div></div>
   <div class="mut">لما تبدأ سنة جديدة: حط الرصيد الجديد وتاريخ بداية السنة، والإجازات القديمة مش هتتخصم تاني.</div>
-  <label class="chk"><input id="emm" type="checkbox" ${e.is_manager ? 'checked' : ''}> مدير موقع (يقدر يثبّت حضور وانصراف جماعي)</label>
-  <div id="teamBox" ${e.is_manager ? '' : 'hidden'}><label>الموظفين تحت مسؤوليته</label>${S.data.emps.filter(x => x.id !== id && x.active).map(x => `<label class="chk"><input type="checkbox" name="tm" value="${x.id}" ${S.data.links.some(l => l.manager_id === id && l.member_id === x.id) ? 'checked' : ''}> ${esc(x.full_name)}</label>`).join('') || '<div class="mut">أضف موظفين الأول.</div>'}</div>
+  <label class="chk"><input id="emm" type="checkbox" ${e.is_manager ? 'checked' : ''}> مدير موقع (يقدر يثبّت حضور وانصراف جماعي لأي موظفين)</label>
   <label class="chk"><input id="ema" type="checkbox" ${e.active ? 'checked' : ''}> الموظف نشط</label>
   <div class="row" style="margin-top:14px"><button class="btn grow">حفظ</button><button type="button" class="btn sec" data-act="empCode" data-id="${id}">كود جديد / فك الربط</button></div>
   <div class="row" style="margin-top:10px"><button type="button" class="btn bad" data-act="empDel" data-id="${id}">حذف الموظف وسجلاته</button><button type="button" class="btn sec" data-act="close">إلغاء</button></div></form>`);
@@ -784,7 +810,7 @@ document.addEventListener('click', async ev => {
     else if (a === 'logout') { api.signOut(); S.me = null; S.tab = 'today'; S.etab = 'home'; S.data = {}; setMsg(); render(); }
     else if (a === 'punch') await punch(t.dataset.kind);
     else if (a === 'gmode') { S.data.gmode = v; setMsg(); renderEmpTeam(); }
-    else if (a === 'gall') { const bs = [...document.querySelectorAll('#teamForm input[name=gm]:not(:disabled)')]; const all = bs.every(b => b.checked); bs.forEach(b => b.checked = !all); }
+    else if (a === 'gall') { const bs = [...document.querySelectorAll('#teamForm label[data-name]')].filter(l => l.style.display !== 'none').map(l => l.querySelector('input[name=gm]')).filter(i => i && !i.disabled); const all = bs.every(b => b.checked); bs.forEach(b => b.checked = !all); }
     else if (a === 'etab') { S.etab = v; setMsg(); render(); }
     else if (a === 'lvCancel') { if (confirm('إلغاء طلب الإجازة؟')) { await api.cancelLeave(id); setMsg('okm', 'تم إلغاء الطلب.'); render(); } }
     else if (a === 'lvAdd') addLeaveDlg();
@@ -821,6 +847,7 @@ document.addEventListener('change', ev => {
 });
 
 document.addEventListener('input', ev => {
+  if (ev.target.id === 'gsearch') { const q = ev.target.value.trim(); document.querySelectorAll('#teamForm label[data-name]').forEach(l => l.style.display = l.dataset.name.includes(q) ? '' : 'none'); }
   if (ev.target.id === 'lf' || ev.target.id === 'lt') {
     const f = $('#lf').value, t = $('#lt').value, d = $('#ldays');
     if (f && t && t >= f) { const n = dayDiff(f, t) + 1; d.textContent = 'المدة: ' + (n === 1 ? 'يوم واحد' : nDays(n) + ' يوم'); } else d.textContent = 'تاريخ النهاية لازم يكون بعد البداية.';
@@ -855,7 +882,6 @@ document.addEventListener('submit', async ev => {
       /* بيتم من الأزرار */
     } else if (f.id === 'emForm') {
       await api.updEmployee(f.dataset.id, { full_name: $('#emn').value.trim(), active: $('#ema').checked, leave_balance: Math.max(0, parseFloat($('#emb').value) || 0), leave_from: $('#emf').value, is_manager: $('#emm').checked });
-      await api.setTeam(f.dataset.id, $('#emm').checked ? [...f.querySelectorAll('input[name=tm]:checked')].map(i => i.value) : []);
       await refreshAdmin();
     }
   } catch (e) {
