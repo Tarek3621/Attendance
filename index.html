@@ -81,7 +81,7 @@ const CFG = window.APP_CONFIG || {};
 const REAL = !!(CFG.SUPABASE_URL && CFG.SUPABASE_ANON_KEY);
 const TZ = CFG.TIMEZONE || 'Africa/Cairo';
 const EMAIL_DOMAIN = 'staff.example.com';
-const VER = 'النسخة 6';
+const VER = 'النسخة 7';
 const verTag = () => `<div class="mut" style="text-align:center;font-size:12px;margin:16px 0 0">${VER}</div>`;
 // أنواع الإجازات اللي بتتخصم من الرصيد (تقدر تغيّرها من config.js بـ LEAVE_DEDUCT)
 const DEDUCT = CFG.LEAVE_DEDUCT || ['regular', 'casual'];
@@ -214,11 +214,7 @@ function realApi() {
     team: () => rpc('team_status'),
     async groupCheck(kind, ids, pos, address, note) { return rpc('group_check', { p_kind: kind, p_members: ids, p_lat: pos.lat, p_lng: pos.lng, p_accuracy: pos.acc, p_address: address, p_note: note || '' }); },
     teamLinks: () => rest('manager_team?select=*'),
-    async setTeam(mid, ids) {
-      await rest('manager_team?manager_id=eq.' + mid, { method: 'DELETE' });
-      ids = ids.filter(i => i !== mid);
-      if (ids.length) await rest('manager_team', { method: 'POST', body: ids.map(i => ({ manager_id: mid, member_id: i })) });
-    },
+    setTeam: (mid, ids) => rpc('set_manager_team', { p_manager: mid, p_members: ids }),
     leaves: () => rest('leave_requests?select=*&order=from_date.desc&limit=3000'),
     requestLeave: (kind, from, to, reason) => rpc('request_leave', { p_kind: kind, p_from: from, p_to: to, p_reason: reason || '' }),
     cancelLeave: id => rpc('cancel_leave', { p_id: id }),
@@ -331,7 +327,7 @@ function mockApi() {
     async team() {
       const m = myEmp(); if (!m || !m.is_manager) err('NOT_MANAGER');
       autoClose();
-      return db.employees.filter(e => e.active && e.id !== m.id).map(e => {
+      return db.employees.filter(e => e.active && e.id !== m.id && db.team.some(t => t.manager_id === m.id && t.member_id === e.id)).map(e => {
         const l = lastOf(e.id);
         return { id: e.id, full_name: e.full_name, last_kind: l ? l.kind : null, last_at: l ? l.at : null, last_address: l ? l.address : null, state: !l ? 'out' : (l.kind === 'in' || l.kind === 'break_end') ? 'in' : l.kind === 'break_start' ? 'break' : 'out',
           group_today: db.attendance.some(a => a.employee_id === e.id && a.kind === 'in' && a.recorded_by && dayKey(a.at) === dayKey(Date.now())) };
@@ -346,7 +342,7 @@ function mockApi() {
       let done = 0; const skipped = [];
       autoClose();
       for (const id of [...new Set(ids)]) {
-        const mem = db.employees.find(e => e.id === id && e.active);
+        const mem = db.employees.find(e => e.id === id && e.active && db.team.some(t => t.manager_id === m.id && t.member_id === e.id));
         let reason = null;
         if (!mem || mem.id === m.id) reason = 'NOT_MEMBER';
         else {
@@ -359,7 +355,7 @@ function mockApi() {
       save(); return { done, skipped };
     },
     async teamLinks() { return db.team.slice(); },
-    async setTeam(mid, ids) { db.team = db.team.filter(t => t.manager_id !== mid).concat(ids.filter(i => i !== mid).map(i => ({ manager_id: mid, member_id: i }))); save(); },
+    async setTeam(mid, ids) { needOk(mid); db.team = db.team.filter(t => t.manager_id !== mid || !okEmp(t.member_id)).concat(ids.filter(i => i !== mid && okEmp(i)).map(i => ({ manager_id: mid, member_id: i }))); save(); },
     async leaves() { return db.leaves.slice().sort((a, b) => b.from_date.localeCompare(a.from_date)).filter(l => isAdm() ? okEmp(l.employee_id) : (myEmp() && l.employee_id === myEmp().id)); },
     async requestLeave(kind, from, to, reason) {
       const e = myEmp(); if (!e) err('NOT_EMPLOYEE');
@@ -676,7 +672,7 @@ async function renderEmpTeam() {
     <div class="list">${team.length ? team.map(m => {
       const ok = m.state === want;
       return `<label class="it chk" data-name="${esc(m.full_name)}" style="${ok ? '' : 'opacity:.55'}"><span class="row" style="gap:10px"><input type="checkbox" name="gm" value="${m.id}" ${ok ? '' : 'disabled'}><span><b>${esc(m.full_name)}</b>
-        <div class="mut">${m.last_address ? esc(m.last_address) + ' · ' + fmtTime(m.last_at) : 'لا يوجد تسجيل'}${m.group_today ? ' · مسجّل جماعيًا اليوم' : ''}</div></span></span><span class="pill ${m.state === 'in' ? 'in' : m.state === 'break' ? 'brk' : 'out'}">${stLbl[m.state]}</span></label>`; }).join('') : '<div class="mut">مفيش موظفين نشطين.</div>'}</div>
+        <div class="mut">${m.last_address ? esc(m.last_address) + ' · ' + fmtTime(m.last_at) : 'لا يوجد تسجيل'}${m.group_today ? ' · مسجّل جماعيًا اليوم' : ''}</div></span></span><span class="pill ${m.state === 'in' ? 'in' : m.state === 'break' ? 'brk' : 'out'}">${stLbl[m.state]}</span></label>`; }).join('') : '<div class="mut">الأدمن لسه ما حددش لك موظفين. اطلب منه يضيفهم من «الموظفين ← تعديل».</div>'}</div>
     ${team.length ? `<label for="gaddr">عنوان الموقع (إجباري)</label><input id="gaddr" list="addrList" maxlength="300" placeholder="مثال: موقع مشروع العاصمة الإدارية" autocomplete="off" value="${esc(S.data.gaddr || '')}">
     <datalist id="addrList">${recentAddr().map(a => `<option value="${esc(a)}">`).join('')}</datalist>
     <label for="gnote">ملاحظة (اختياري)</label><input id="gnote" maxlength="300">
@@ -831,14 +827,17 @@ function dlg(html) {
   d.addEventListener('close', () => d.remove());
   d.showModal(); return d;
 }
-function editEmp(id) {
+async function editEmp(id) {
   const e = S.data.emps.find(x => x.id === id);
+  const links = (await api.teamLinks()).filter(t => t.manager_id === id).map(t => t.member_id);
   dlg(`<h2 style="margin-top:0">تعديل: ${esc(e.full_name)}</h2><div id="dmsg"></div>
   <form id="emForm" data-id="${id}"><label for="emn">الاسم</label><input id="emn" required value="${esc(e.full_name)}">
   <div class="grid2"><div><label for="emb">الرصيد الابتدائي (أيام)</label><input id="emb" type="number" min="0" step="0.5" value="${e.leave_balance ?? 0}" required></div>
   <div><label for="emf">يُحسب الخصم من تاريخ</label><input id="emf" type="date" value="${e.leave_from || ''}" required></div></div>
   <div class="mut">لما تبدأ سنة جديدة: حط الرصيد الجديد وتاريخ بداية السنة، والإجازات القديمة مش هتتخصم تاني.</div>
-  <label class="chk"><input id="emm" type="checkbox" ${e.is_manager ? 'checked' : ''}> مدير موقع (يقدر يثبّت حضور وانصراف جماعي لأي موظفين)</label>
+  <label class="chk"><input id="emm" type="checkbox" ${e.is_manager ? 'checked' : ''}> مدير موقع (يقدر يثبّت حضور وانصراف جماعي)</label>
+  <div id="teamBox" ${e.is_manager ? '' : 'hidden'}><label>الموظفين اللي يظهروا في قايمته</label>
+  ${S.data.emps.filter(x => x.id !== id && x.active).map(x => `<label class="chk"><input type="checkbox" name="tm" value="${x.id}" ${links.includes(x.id) ? 'checked' : ''}> ${esc(x.full_name)}</label>`).join('') || '<div class="mut">مفيش موظفين تانيين.</div>'}</div>
   <label class="chk"><input id="ema" type="checkbox" ${e.active ? 'checked' : ''}> الموظف نشط</label>
   <div class="row" style="margin-top:14px"><button class="btn grow">حفظ</button><button type="button" class="btn sec" data-act="empCode" data-id="${id}">كود جديد / فك الربط</button></div>
   <div class="row" style="margin-top:10px"><button type="button" class="btn bad" data-act="empDel" data-id="${id}">حذف الموظف وسجلاته</button><button type="button" class="btn sec" data-act="close">إلغاء</button></div></form>`);
@@ -939,6 +938,7 @@ document.addEventListener('submit', async ev => {
       /* بيتم من الأزرار */
     } else if (f.id === 'emForm') {
       await api.updEmployee(f.dataset.id, { full_name: $('#emn').value.trim(), active: $('#ema').checked, leave_balance: Math.max(0, parseFloat($('#emb').value) || 0), leave_from: $('#emf').value, is_manager: $('#emm').checked });
+      await api.setTeam(f.dataset.id, $('#emm').checked ? [...f.querySelectorAll('input[name=tm]:checked')].map(i => i.value) : []);
       await refreshAdmin();
     }
   } catch (e) {
