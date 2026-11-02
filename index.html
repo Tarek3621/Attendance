@@ -81,7 +81,7 @@ const CFG = window.APP_CONFIG || {};
 const REAL = !!(CFG.SUPABASE_URL && CFG.SUPABASE_ANON_KEY);
 const TZ = CFG.TIMEZONE || 'Africa/Cairo';
 const EMAIL_DOMAIN = 'staff.example.com';
-const VER = 'النسخة 5';
+const VER = 'النسخة 6';
 const verTag = () => `<div class="mut" style="text-align:center;font-size:12px;margin:16px 0 0">${VER}</div>`;
 // أنواع الإجازات اللي بتتخصم من الرصيد (تقدر تغيّرها من config.js بـ LEAVE_DEDUCT)
 const DEDUCT = CFG.LEAVE_DEDUCT || ['regular', 'casual'];
@@ -118,6 +118,11 @@ const ERR = {
   ALREADY_IN: 'إنت مسجّل حضور بالفعل. حدّث الصفحة وجرّب تاني.',
   NOT_IN: 'مفيش حضور مفتوح دلوقتي (ممكن يكون اتقفل تلقائيًا بعد 10 ساعات عمل). حدّث الصفحة وجرّب تاني.',
   NOT_ON_BREAK: 'إنت مش في استراحة دلوقتي.',
+  NOT_SUPER: 'العملية دي للأدمن الكامل فقط.',
+  USER_NOT_FOUND: 'مفيش حساب بالإيميل ده. اعمله الأول من Supabase ← Authentication ← Users (مع تفعيل Auto Confirm User).',
+  IS_EMPLOYEE: 'الإيميل ده حساب موظف، ومينفعش يبقى أدمن.',
+  SELF: 'مينفعش تسحب صلاحية نفسك.',
+  BAD_NAME: 'اكتب اسم الموظف (حرفين على الأقل).',
   GROUP_LOCKED: 'تم تسجيل حضورك جماعيًا النهارده، فالحضور الفردي مقفول لباقي اليوم. المدير هو اللي يسجّل حضورك.',
   NOT_MANAGER: 'الصلاحية دي لمديري المواقع اللي حددهم الأدمن.',
   NO_MEMBERS: 'اختار موظف واحد على الأقل.',
@@ -178,8 +183,8 @@ function realApi() {
     async me() {
       if (!sess) return null;
       const u = sess.user.id;
-      const a = await rest('admins?select=user_id&user_id=eq.' + u);
-      if (a.length) return { role: 'admin', name: 'الأدمن' };
+      const a = await rest('admins?select=user_id,is_super&user_id=eq.' + u);
+      if (a.length) return { role: 'admin', name: 'الأدمن', is_super: a[0].is_super };
       const e = await rest('employees?select=*&user_id=eq.' + u);
       if (e.length) return { role: 'employee', emp: e[0], name: e[0].full_name };
       return { role: 'none' };
@@ -198,10 +203,11 @@ function realApi() {
     async checkIn(kind, pos, address, note) { return rpc('check_in', { p_kind: kind, p_lat: pos.lat, p_lng: pos.lng, p_accuracy: pos.acc, p_address: address || '', p_note: note || '' }); },
     async myHistory(empId) { await autoClose(); return rest('attendance?select=*&employee_id=eq.' + empId + '&order=at.desc&limit=200'); },
     async employees() { return rest('employees?select=*&order=created_at'); },
-    async addEmployee(name, balance) {
-      const r = await rest('employees', { method: 'POST', headers: { Prefer: 'return=representation' }, body: { full_name: name, join_code: genCode(), leave_balance: balance || 0 } });
-      return r[0];
-    },
+    addEmployee: (name, balance) => rpc('add_employee', { p_name: name, p_balance: balance || 0 }),
+    listAdmins: () => rpc('list_admins'),
+    grantAdmin: (email, sup) => rpc('grant_admin', { p_email: email, p_super: !!sup }),
+    setAdminScope: (uid, ids) => rpc('set_admin_scope', { p_user: uid, p_emps: ids }),
+    revokeAdmin: uid => rpc('revoke_admin', { p_user: uid }),
     updEmployee: (id, patch) => rest('employees?id=eq.' + id, { method: 'PATCH', body: patch }),
     delEmployee: id => rest('employees?id=eq.' + id, { method: 'DELETE' }),
     async newCode(id) { const c = genCode(); await rest('employees?id=eq.' + id, { method: 'PATCH', body: { join_code: c, user_id: null } }); return c; },
@@ -245,6 +251,9 @@ function mockApi() {
   const myEmp = () => { const u = cur(); return u && u.empId ? db.employees.find(e => e.id === u.empId && e.active) : null; };
   const lastOf = id => db.attendance.filter(a => a.employee_id === id).sort((a, b) => b.at.localeCompare(a.at))[0];
   const err = m => { throw { message: m }; };
+  const isAdm = () => cur() && cur().role === 'admin';
+  const okEmp = id => isAdm() && (cur().super !== false || (cur().scope || []).includes(id));
+  const needOk = id => { if (!okEmp(id)) err('NOT_ADMIN'); };
   function autoClose() {
     const now = Date.now(), MAX = 10 * 3600e3;
     db.employees.forEach(e => {
@@ -265,7 +274,7 @@ function mockApi() {
     hasSession: () => !!db.session,
     async me() {
       const u = cur(); if (!u) return null;
-      if (u.role === 'admin') return { role: 'admin', name: 'الأدمن' };
+      if (u.role === 'admin') return { role: 'admin', name: 'الأدمن', is_super: u.super !== false };
       const e = myEmp(); return e ? { role: 'employee', emp: e, name: e.full_name } : { role: 'none' };
     },
     async signIn(user, pw) { const k = user.toLowerCase(); if (!db.users[k] || db.users[k].pw !== pw) err('Invalid login credentials'); db.session = k; save(); },
@@ -298,10 +307,26 @@ function mockApi() {
       db.attendance.push(rec); save(); return rec;
     },
     async myHistory(id) { autoClose(); return db.attendance.filter(a => a.employee_id === id).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 200); },
-    async employees() { return db.employees.map(e => ({ ...e })); },
-    async addEmployee(name, balance) { const e = { id: uid(), user_id: null, full_name: name, join_code: genCode(), active: true, leave_balance: balance || 0, leave_from: new Date().getFullYear() + '-01-01' }; db.employees.push(e); save(); return e; },
-    async updEmployee(id, patch) { Object.assign(db.employees.find(e => e.id === id), patch); save(); },
-    async delEmployee(id) { db.employees = db.employees.filter(e => e.id !== id); db.attendance = db.attendance.filter(a => a.employee_id !== id); db.leaves = db.leaves.filter(l => l.employee_id !== id); db.team = db.team.filter(t => t.manager_id !== id && t.member_id !== id); save(); },
+    async employees() { return db.employees.filter(e => !isAdm() || okEmp(e.id)).map(e => ({ ...e })); },
+    async addEmployee(name, balance) {
+      if (!isAdm()) err('NOT_ADMIN'); if ((name || '').trim().length < 2) err('BAD_NAME');
+      const e = { id: uid(), user_id: null, full_name: name.trim(), join_code: genCode(), active: true, leave_balance: balance || 0, leave_from: new Date().getFullYear() + '-01-01' };
+      db.employees.push(e); if (cur().super === false) (cur().scope = cur().scope || []).push(e.id); save(); return e;
+    },
+    async listAdmins() {
+      if (!isAdm() || cur().super === false) err('NOT_SUPER');
+      return Object.keys(db.users).filter(k => db.users[k].role === 'admin').map(k => ({ user_id: k, email: k, is_super: db.users[k].super !== false, employee_ids: db.users[k].scope || [] }));
+    },
+    async grantAdmin(email, sup) {
+      if (!isAdm() || cur().super === false) err('NOT_SUPER');
+      const k = email.trim().toLowerCase(); if (!k) err('USER_NOT_FOUND');
+      if (db.users[k] && db.users[k].role === 'employee') err('IS_EMPLOYEE');
+      db.users[k] = { ...(db.users[k] || { pw: 'admin' }), role: 'admin', super: !!sup, scope: sup ? [] : (db.users[k] && db.users[k].scope) || [] }; save(); return k;
+    },
+    async setAdminScope(k, ids) { if (!isAdm() || cur().super === false) err('NOT_SUPER'); if (!db.users[k]) err('NOT_FOUND'); db.users[k].scope = ids.slice(); save(); },
+    async revokeAdmin(k) { if (!isAdm() || cur().super === false) err('NOT_SUPER'); if (k === db.session) err('SELF'); delete db.users[k]; save(); },
+    async updEmployee(id, patch) { needOk(id); Object.assign(db.employees.find(e => e.id === id), patch); save(); },
+    async delEmployee(id) { needOk(id); db.employees = db.employees.filter(e => e.id !== id); db.attendance = db.attendance.filter(a => a.employee_id !== id); db.leaves = db.leaves.filter(l => l.employee_id !== id); db.team = db.team.filter(t => t.manager_id !== id && t.member_id !== id); save(); },
     async newCode(id) { const e = db.employees.find(x => x.id === id); e.join_code = genCode(); e.user_id = null; save(); return e.join_code; },
     async team() {
       const m = myEmp(); if (!m || !m.is_manager) err('NOT_MANAGER');
@@ -335,7 +360,7 @@ function mockApi() {
     },
     async teamLinks() { return db.team.slice(); },
     async setTeam(mid, ids) { db.team = db.team.filter(t => t.manager_id !== mid).concat(ids.filter(i => i !== mid).map(i => ({ manager_id: mid, member_id: i }))); save(); },
-    async leaves() { return db.leaves.slice().sort((a, b) => b.from_date.localeCompare(a.from_date)).filter(l => cur().role === 'admin' || (myEmp() && l.employee_id === myEmp().id)); },
+    async leaves() { return db.leaves.slice().sort((a, b) => b.from_date.localeCompare(a.from_date)).filter(l => isAdm() ? okEmp(l.employee_id) : (myEmp() && l.employee_id === myEmp().id)); },
     async requestLeave(kind, from, to, reason) {
       const e = myEmp(); if (!e) err('NOT_EMPLOYEE');
       if (!LEAVE[kind]) err('BAD_KIND');
@@ -348,18 +373,18 @@ function mockApi() {
     },
     async cancelLeave(id) { const e = myEmp(); const i = db.leaves.findIndex(l => l.id === id && e && l.employee_id === e.id && l.status === 'pending'); if (i < 0) err('NOT_FOUND'); db.leaves.splice(i, 1); save(); },
     async decideLeave(id, status, days, note) {
-      if (cur().role !== 'admin') err('NOT_ADMIN'); const l = db.leaves.find(x => x.id === id); if (!l) err('NOT_FOUND');
+      const l = db.leaves.find(x => x.id === id); if (!l) err('NOT_FOUND'); needOk(l.employee_id);
       l.status = status; if (days > 0) l.days = days; l.admin_note = (note || '').trim().slice(0, 300); l.decided_at = new Date().toISOString(); save(); return l;
     },
     async addLeave(emp, kind, from, to, days, note) {
-      if (cur().role !== 'admin') err('NOT_ADMIN');
+      needOk(emp);
       if (!from || !to || to < from) err('BAD_DATES');
       if (db.leaves.some(l => l.employee_id === emp && l.status !== 'rejected' && l.from_date <= to && l.to_date >= from)) err('LEAVE_OVERLAP');
       const r = { id: uid(), employee_id: emp, kind, from_date: from, to_date: to, days: days > 0 ? days : dayDiff(from, to) + 1, reason: '', status: 'approved', admin_note: (note || '').trim(), created_at: new Date().toISOString(), decided_at: new Date().toISOString() };
       db.leaves.push(r); save(); return r;
     },
-    async delLeave(id) { if (cur().role !== 'admin') err('NOT_ADMIN'); db.leaves = db.leaves.filter(l => l.id !== id); save(); },
-    async attendance(from, to) { autoClose(); return db.attendance.filter(a => a.at >= from && a.at < to).sort((a, b) => b.at.localeCompare(a.at)); },
+    async delLeave(id) { const l = db.leaves.find(x => x.id === id); if (l) needOk(l.employee_id); db.leaves = db.leaves.filter(l => l.id !== id); save(); },
+    async attendance(from, to) { autoClose(); return db.attendance.filter(a => a.at >= from && a.at < to && (!isAdm() || okEmp(a.employee_id))).sort((a, b) => b.at.localeCompare(a.at)); },
     reset() { localStorage.removeItem(KEY); }
   };
 }
@@ -515,12 +540,13 @@ async function punch(kind) {
 }
 
 /* ---------- شاشة الأدمن ---------- */
-const TABS = [['today', 'النهارده'], ['reports', 'التقارير'], ['leaves', 'الإجازات'], ['records', 'السجلات'], ['emps', 'الموظفين']];
+const TABS_BASE = [['today', 'النهارده'], ['reports', 'التقارير'], ['leaves', 'الإجازات'], ['records', 'السجلات'], ['emps', 'الموظفين']];
+const tabsFor = () => S.me && S.me.is_super ? [...TABS_BASE, ['admins', 'الأدمنز']] : TABS_BASE;
 async function renderAdmin() {
-  app.innerHTML = `${demoBar()}<header class="top"><h1>لوحة الأدمن</h1><button class="btn sec sm" data-act="logout">خروج</button></header>
+  app.innerHTML = `${demoBar()}<header class="top"><h1>لوحة الأدمن${S.me.is_super ? '' : ' <span class="pill brk">نطاق محدد</span>'}</h1><button class="btn sec sm" data-act="logout">خروج</button></header>
   ${msgHtml()}<div id="pane"><div class="mut">جاري التحميل…</div></div>${verTag()}
-  <nav class="tabs">${TABS.map(([k, n]) => `<button data-act="tab" data-v="${k}" class="${S.tab === k ? 'on' : ''}">${n}</button>`).join('')}</nav>`;
-  try { await ({ today: paneToday, reports: paneReports, leaves: paneLeaves, records: paneRecords, emps: paneEmps })[S.tab](); }
+  <nav class="tabs">${tabsFor().map(([k, n]) => `<button data-act="tab" data-v="${k}" class="${S.tab === k ? 'on' : ''}">${n}</button>`).join('')}</nav>`;
+  try { await ({ today: paneToday, reports: paneReports, leaves: paneLeaves, records: paneRecords, emps: paneEmps, admins: paneAdmins })[S.tab](); }
   catch (e) { $('#pane').innerHTML = `<div class="msg err">${esc(errText(e))}</div>`; }
 }
 
@@ -776,6 +802,27 @@ async function paneReports() {
   </tbody></table></div><div class="mut" style="margin-top:8px">* فيه فترة حضور مفتوحة (من غير انصراف) مش محسوبة. وقت التنقل بين انصراف وحضور مش محسوب ساعات عمل.</div></div>${detail}`;
 }
 
+/* ---------- الأدمن: إدارة الأدمنز ---------- */
+async function paneAdmins() {
+  const [admins, emps] = await Promise.all([api.listAdmins(), api.employees()]);
+  S.data.admins = admins; S.data.emps = emps;
+  $('#pane').innerHTML = `<div class="card"><div class="row sp"><h2 style="margin:0">الأدمنز (${admins.length})</h2><button class="btn sm" data-act="adAdd">+ أدمن</button></div>
+  <div class="list">${admins.map(a => `<div class="it" style="align-items:flex-start"><div class="grow"><b dir="ltr" style="unicode-bidi:plaintext">${esc(a.email)}</b>
+    <div class="mut">${a.is_super ? 'كامل الصلاحيات على كل الموظفين' : `صلاحيات كاملة على ${a.employee_ids.length} موظف محدد`}</div></div>
+    <button class="btn sec sm" data-act="adEdit" data-id="${esc(a.user_id)}">تعديل</button></div>`).join('')}</div></div>
+  <div class="msg inf">الأدمن المحدد بيشوف ويعدّل ويقبل الإجازات ويحذف ويضيف موظفين، لكن <b>للأفراد اللي إنت بتحددهم له فقط</b>. الموظفين اللي بيضيفهم هو بيدخلوا في نطاقه تلقائيًا. مفيش أدمن محدد يقدر يضيف أدمنز تانيين.</div>`;
+}
+function adminDlg(id) {
+  const a = id ? S.data.admins.find(x => x.user_id === id) : { email: '', is_super: false, employee_ids: [] };
+  dlg(`<h2 style="margin-top:0">${id ? 'تعديل أدمن' : 'إضافة أدمن'}</h2><div id="dmsg"></div>
+  <form id="adForm" data-id="${id ? esc(id) : ''}">
+  ${id ? `<div dir="ltr" style="text-align:start"><b>${esc(a.email)}</b></div>` : `<label for="ade">إيميل الأدمن (لازم يكون اتعمل الأول من Supabase ← Authentication ← Users، مع تفعيل Auto Confirm User)</label><input id="ade" inputmode="email" autocapitalize="off" dir="ltr" required>`}
+  <label for="adt">نوع الصلاحية</label><select id="adt"><option value="scoped" ${a.is_super ? '' : 'selected'}>صلاحيات كاملة لأفراد محددين</option><option value="super" ${a.is_super ? 'selected' : ''}>صلاحيات كاملة على كل الموظفين</option></select>
+  <div id="scopeBox" ${a.is_super ? 'hidden' : ''}><label>الأفراد اللي يديرهم</label>
+  ${S.data.emps.map(e => `<label class="chk"><input type="checkbox" name="sc" value="${e.id}" ${a.employee_ids.includes(e.id) ? 'checked' : ''}> ${esc(e.full_name)}${e.active ? '' : ' (موقوف)'}</label>`).join('') || '<div class="mut">مفيش موظفين.</div>'}</div>
+  <div class="row" style="margin-top:14px"><button class="btn grow">حفظ</button>${id ? `<button type="button" class="btn bad" data-act="adRevoke" data-id="${esc(id)}">سحب الصلاحية</button>` : ''}<button type="button" class="btn sec" data-act="close">إلغاء</button></div></form>`);
+}
+
 /* ---------- نوافذ التعديل ---------- */
 function dlg(html) {
   let d = $('#dlg'); if (d) d.remove();
@@ -827,6 +874,9 @@ document.addEventListener('click', async ev => {
     else if (a === 'refresh') renderAdmin();
     else if (a === 'close') closeDlg();
     else if (a === 'empEdit') editEmp(id);
+    else if (a === 'adAdd') adminDlg('');
+    else if (a === 'adEdit') adminDlg(id);
+    else if (a === 'adRevoke') { if (confirm('سحب صلاحية الأدمن من الحساب ده؟')) { await api.revokeAdmin(id); await refreshAdmin(); } }
     else if (a === 'empDel') { if (confirm('حذف الموظف وكل تسجيلاته نهائيًا؟ لو عايز توقفه بس، شيل علامة «نشط».')) { await api.delEmployee(id); await refreshAdmin(); } }
     else if (a === 'empCode') { const c = await api.newCode(id); dmsg('الكود الجديد: ' + c + ' (الحساب القديم اتفك ارتباطه)', 'okm'); }
     else if (a === 'csv') {
@@ -841,6 +891,7 @@ document.addEventListener('click', async ev => {
 document.addEventListener('change', ev => {
   if (ev.target.id === 'fm') { S.data.month = ev.target.value || undefined; renderAdmin(); }
   if (ev.target.id === 'fw') { S.data.who = ev.target.value; renderAdmin(); }
+  if (ev.target.id === 'adt') { const b = $('#scopeBox'); if (b) b.hidden = ev.target.value === 'super'; }
   if (ev.target.id === 'emm') { const b = $('#teamBox'); if (b) b.hidden = !ev.target.checked; }
   if (ev.target.id === 'rt') { S.data.rtype = ev.target.value; renderAdmin(); }
   if (ev.target.id === 'rr' && ev.target.value) { S.data.rref = ev.target.value; renderAdmin(); }
@@ -870,6 +921,12 @@ document.addEventListener('submit', async ev => {
     } else if (f.id === 'empForm') {
       const e = await api.addEmployee($('#en').value.trim(), parseFloat($('#eb').value) || 0);
       setMsg('okm', `تمت إضافة ${e.full_name}. كود التفعيل: ${e.join_code} (ابعته له)`); await renderAdmin();
+    } else if (f.id === 'adForm') {
+      const sup = $('#adt').value === 'super', ids = [...f.querySelectorAll('input[name=sc]:checked')].map(i => i.value);
+      let uid = f.dataset.id;
+      if (uid || $('#ade')) { uid = await api.grantAdmin(uid ? S.data.admins.find(x => x.user_id === uid).email : $('#ade').value.trim(), sup); }
+      if (!sup) await api.setAdminScope(uid, ids);
+      await refreshAdmin();
     } else if (f.id === 'teamForm') {
       await groupSubmit();
     } else if (f.id === 'leaveForm') {
