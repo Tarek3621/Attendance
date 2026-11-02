@@ -54,7 +54,7 @@ input:focus,select:focus{outline:2px solid var(--pri);outline-offset:1px}
 .list .it:first-child{border-top:0}
 a{color:var(--pri)}
 nav.tabs{position:fixed;bottom:0;inset-inline:0;background:var(--card);border-top:1px solid var(--line);display:flex;padding-bottom:env(safe-area-inset-bottom);z-index:5}
-nav.tabs button{flex:1;background:none;border:0;padding:10px 4px;min-height:56px;color:var(--mut);font-size:13px;cursor:pointer}
+nav.tabs button{flex:1;background:none;border:0;padding:10px 2px;min-height:56px;color:var(--mut);font-size:13px;cursor:pointer}
 nav.tabs button.on{color:var(--pri);font-weight:800}
 table{width:100%;border-collapse:collapse;font-size:14px}
 th,td{padding:8px 6px;text-align:start;border-bottom:1px solid var(--line);white-space:nowrap}
@@ -66,8 +66,8 @@ th,td{padding:8px 6px;text-align:start;border-bottom:1px solid var(--line);white
 .chk input{width:22px;min-height:22px;height:22px}
 dialog{border:0;border-radius:18px;background:var(--card);color:var(--ink);max-width:min(520px,92vw);width:100%;padding:18px}
 dialog::backdrop{background:#0008}
-.stat{display:flex;gap:8px}
-.stat>div{flex:1;background:var(--soft);border-radius:14px;padding:10px;text-align:center}
+.stat{display:flex;gap:8px;flex-wrap:wrap}
+.stat>div{flex:1 1 70px;background:var(--soft);border-radius:14px;padding:10px;text-align:center}
 .stat b{display:block;font-size:24px}
 </style>
 </head>
@@ -81,6 +81,10 @@ const CFG = window.APP_CONFIG || {};
 const REAL = !!(CFG.SUPABASE_URL && CFG.SUPABASE_ANON_KEY);
 const TZ = CFG.TIMEZONE || 'Africa/Cairo';
 const EMAIL_DOMAIN = 'staff.example.com';
+// أنواع الإجازات اللي بتتخصم من الرصيد (تقدر تغيّرها من config.js بـ LEAVE_DEDUCT)
+const DEDUCT = CFG.LEAVE_DEDUCT || ['regular', 'casual'];
+const LEAVE = { regular: 'اعتيادية', casual: 'عارضة', company: 'طلب الشركة', sick: 'مرضية' };
+const LSTATUS = { pending: ['قيد المراجعة', 'brk'], approved: ['مقبولة', 'in'], rejected: ['مرفوضة', 'none'] };
 
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -89,6 +93,11 @@ const fmtDate = ts => new Intl.DateTimeFormat('ar-EG', { timeZone: TZ, weekday: 
 const dayKey = ts => new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ts));
 const monthKey = ts => dayKey(ts).slice(0, 7);
 const fmtHours = ms => { const m = Math.round(ms / 60000); return Math.floor(m / 60) + ' س ' + String(m % 60).padStart(2, '0') + ' د'; };
+const dayDiff = (a, b) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 864e5);
+const addDays = (k, n) => new Date(Date.parse(k + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10);
+const fmtDay = k => new Intl.DateTimeFormat('ar-EG', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(k + 'T12:00:00Z'));
+const fmtShort = k => new Intl.DateTimeFormat('ar-EG', { timeZone: 'UTC', day: 'numeric', month: 'short' }).format(new Date(k + 'T12:00:00Z'));
+const nDays = n => Number(n).toLocaleString('ar-EG', { maximumFractionDigits: 1 });
 const mapLink = (lat, lng) => `https://www.google.com/maps?q=${lat},${lng}`;
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id' + Math.random().toString(16).slice(2) + Date.now());
 function distM(a, b, c, d) {
@@ -107,6 +116,15 @@ const ERR = {
   ALREADY_IN: 'إنت مسجّل حضور بالفعل. حدّث الصفحة وجرّب تاني.',
   NOT_IN: 'العملية دي مش متاحة في حالتك الحالية. حدّث الصفحة وجرّب تاني.',
   NOT_ON_BREAK: 'إنت مش في استراحة دلوقتي.',
+  GROUP_LOCKED: 'تم تسجيل حضورك جماعيًا النهارده، فالحضور الفردي مقفول لباقي اليوم. المدير هو اللي يسجّل حضورك.',
+  NOT_MANAGER: 'الصلاحية دي لمديري المواقع اللي حددهم الأدمن.',
+  NO_MEMBERS: 'اختار موظف واحد على الأقل.',
+  LEAVE_OVERLAP: 'فيه إجازة تانية (معلّقة أو مقبولة) بتتقاطع مع الأيام دي.',
+  BAD_DATES: 'التواريخ مش صحيحة. تاريخ النهاية لازم يكون بعد أو يساوي البداية.',
+  TOO_OLD: 'مينفعش تطلب إجازة لتاريخ أقدم من 30 يوم.',
+  TOO_LONG: 'أقصى مدة للطلب الواحد 60 يوم.',
+  NOT_ADMIN: 'العملية دي للأدمن فقط.',
+  NOT_FOUND: 'الطلب مش موجود أو اتغيّرت حالته. حدّث الصفحة.',
   ADDRESS_REQUIRED: 'اكتب عنوان الموقع (3 حروف على الأقل).',
   BAD_LOCATION: 'الموقع اللي اتقرا مش صالح. جرّب تاني.',
   LOW_ACCURACY: 'دقة الموقع ضعيفة. اطلع مكان مفتوح أو شغّل GPS بدقة عالية وجرّب تاني.',
@@ -176,13 +194,27 @@ function realApi() {
     async checkIn(kind, pos, address, note) { return rpc('check_in', { p_kind: kind, p_lat: pos.lat, p_lng: pos.lng, p_accuracy: pos.acc, p_address: address || '', p_note: note || '' }); },
     async myHistory(empId) { return rest('attendance?select=*&employee_id=eq.' + empId + '&order=at.desc&limit=200'); },
     async employees() { return rest('employees?select=*&order=created_at'); },
-    async addEmployee(name) {
-      const r = await rest('employees', { method: 'POST', headers: { Prefer: 'return=representation' }, body: { full_name: name, join_code: genCode() } });
+    async addEmployee(name, balance) {
+      const r = await rest('employees', { method: 'POST', headers: { Prefer: 'return=representation' }, body: { full_name: name, join_code: genCode(), leave_balance: balance || 0 } });
       return r[0];
     },
     updEmployee: (id, patch) => rest('employees?id=eq.' + id, { method: 'PATCH', body: patch }),
     delEmployee: id => rest('employees?id=eq.' + id, { method: 'DELETE' }),
     async newCode(id) { const c = genCode(); await rest('employees?id=eq.' + id, { method: 'PATCH', body: { join_code: c, user_id: null } }); return c; },
+    team: () => rpc('team_status'),
+    async groupCheck(kind, ids, pos, address, note) { return rpc('group_check', { p_kind: kind, p_members: ids, p_lat: pos.lat, p_lng: pos.lng, p_accuracy: pos.acc, p_address: address, p_note: note || '' }); },
+    teamLinks: () => rest('manager_team?select=*'),
+    async setTeam(mid, ids) {
+      await rest('manager_team?manager_id=eq.' + mid, { method: 'DELETE' });
+      ids = ids.filter(i => i !== mid);
+      if (ids.length) await rest('manager_team', { method: 'POST', body: ids.map(i => ({ manager_id: mid, member_id: i })) });
+    },
+    leaves: () => rest('leave_requests?select=*&order=from_date.desc&limit=3000'),
+    requestLeave: (kind, from, to, reason) => rpc('request_leave', { p_kind: kind, p_from: from, p_to: to, p_reason: reason || '' }),
+    cancelLeave: id => rpc('cancel_leave', { p_id: id }),
+    decideLeave: (id, status, days, note) => rpc('decide_leave', { p_id: id, p_status: status, p_days: days, p_note: note || '' }),
+    addLeave: (emp, kind, from, to, days, note) => rpc('admin_add_leave', { p_emp: emp, p_kind: kind, p_from: from, p_to: to, p_days: days || 0, p_note: note || '' }),
+    delLeave: id => rpc('delete_leave', { p_id: id }),
     attendance(fromIso, toIso) {
       return rest(`attendance?select=*&at=gte.${encodeURIComponent(fromIso)}&at=lt.${encodeURIComponent(toIso)}&order=at.desc&limit=5000`);
     }
@@ -197,11 +229,12 @@ function mockApi() {
   if (!db) {
     const e1 = uid(), e2 = uid();
     db = {
-      employees: [{ id: e1, user_id: null, full_name: 'أحمد محمد', join_code: '111111', active: true },
-      { id: e2, user_id: null, full_name: 'سارة علي', join_code: '222222', active: true }],
+      employees: [{ id: e1, user_id: null, full_name: 'أحمد محمد', join_code: '111111', active: true, leave_balance: 21, leave_from: new Date().getFullYear() + '-01-01' },
+      { id: e2, user_id: null, full_name: 'سارة علي', join_code: '222222', active: true, leave_balance: 21, leave_from: new Date().getFullYear() + '-01-01' }], leaves: [],
       attendance: [], users: { admin: { pw: 'admin', role: 'admin' } }, session: null
     };
   }
+  db.team = db.team || []; db.leaves = db.leaves || []; db.employees.forEach(e => { if (e.leave_balance == null) { e.leave_balance = 21; e.leave_from = new Date().getFullYear() + '-01-01'; } });
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { } };
   const cur = () => db.users[db.session];
   const myEmp = () => { const u = cur(); return u && u.empId ? db.employees.find(e => e.id === u.empId && e.active) : null; };
@@ -234,20 +267,75 @@ function mockApi() {
       const last = lastOf(e.id);
       const st = !last ? 'out' : (last.kind === 'in' || last.kind === 'break_end') ? 'in' : last.kind === 'break_start' ? 'break' : 'out';
       if (kind === 'in' && st !== 'out') err('ALREADY_IN');
+      if (kind === 'in' && db.attendance.some(a => a.employee_id === e.id && a.kind === 'in' && a.recorded_by && dayKey(a.at) === dayKey(Date.now()))) err('GROUP_LOCKED');
       if (kind === 'out' && st !== 'in') err('NOT_IN');
       if (kind === 'break_start' && st !== 'in') err('NOT_IN');
       if (kind === 'break_end' && st !== 'break') err('NOT_ON_BREAK');
       let addr = (address || '').trim();
       if (kind === 'in' || kind === 'out') { if (addr.length < 3) err('ADDRESS_REQUIRED'); } else if (!addr) addr = (last && last.address) || '';
-      const rec = { id: uid(), employee_id: e.id, kind, at: new Date().toISOString(), lat: pos.lat, lng: pos.lng, accuracy_m: pos.acc, address: addr.slice(0, 300), note: (note || '').trim().slice(0, 300) };
+      const rec = { id: uid(), employee_id: e.id, kind, at: new Date().toISOString(), lat: pos.lat, lng: pos.lng, accuracy_m: pos.acc, address: addr.slice(0, 300), note: (note || '').trim().slice(0, 300), recorded_by: null, recorded_by_name: '' };
       db.attendance.push(rec); save(); return rec;
     },
     async myHistory(id) { return db.attendance.filter(a => a.employee_id === id).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 200); },
     async employees() { return db.employees.map(e => ({ ...e })); },
-    async addEmployee(name) { const e = { id: uid(), user_id: null, full_name: name, join_code: genCode(), active: true }; db.employees.push(e); save(); return e; },
+    async addEmployee(name, balance) { const e = { id: uid(), user_id: null, full_name: name, join_code: genCode(), active: true, leave_balance: balance || 0, leave_from: new Date().getFullYear() + '-01-01' }; db.employees.push(e); save(); return e; },
     async updEmployee(id, patch) { Object.assign(db.employees.find(e => e.id === id), patch); save(); },
-    async delEmployee(id) { db.employees = db.employees.filter(e => e.id !== id); db.attendance = db.attendance.filter(a => a.employee_id !== id); save(); },
+    async delEmployee(id) { db.employees = db.employees.filter(e => e.id !== id); db.attendance = db.attendance.filter(a => a.employee_id !== id); db.leaves = db.leaves.filter(l => l.employee_id !== id); db.team = db.team.filter(t => t.manager_id !== id && t.member_id !== id); save(); },
     async newCode(id) { const e = db.employees.find(x => x.id === id); e.join_code = genCode(); e.user_id = null; save(); return e.join_code; },
+    async team() {
+      const m = myEmp(); if (!m || !m.is_manager) err('NOT_MANAGER');
+      return db.team.filter(t => t.manager_id === m.id).map(t => db.employees.find(e => e.id === t.member_id)).filter(e => e && e.active).map(e => {
+        const l = lastOf(e.id);
+        return { id: e.id, full_name: e.full_name, last_kind: l ? l.kind : null, last_at: l ? l.at : null, last_address: l ? l.address : null, state: !l ? 'out' : (l.kind === 'in' || l.kind === 'break_end') ? 'in' : l.kind === 'break_start' ? 'break' : 'out',
+          group_today: db.attendance.some(a => a.employee_id === e.id && a.kind === 'in' && a.recorded_by && dayKey(a.at) === dayKey(Date.now())) };
+      }).sort((a, b) => a.full_name.localeCompare(b.full_name, 'ar'));
+    },
+    async groupCheck(kind, ids, pos, address, note) {
+      const m = myEmp(); if (!m || !m.is_manager) err('NOT_MANAGER');
+      if (kind !== 'in' && kind !== 'out') err('BAD_KIND');
+      if ((pos.acc || 0) > 300) err('LOW_ACCURACY');
+      const addr = (address || '').trim(); if (addr.length < 3) err('ADDRESS_REQUIRED');
+      if (!ids || !ids.length) err('NO_MEMBERS');
+      let done = 0; const skipped = [];
+      for (const id of [...new Set(ids)]) {
+        const mem = db.employees.find(e => e.id === id && e.active);
+        let reason = null;
+        if (!mem || !db.team.some(t => t.manager_id === m.id && t.member_id === id)) reason = 'NOT_MEMBER';
+        else {
+          const l = lastOf(id), st = !l ? 'out' : (l.kind === 'in' || l.kind === 'break_end') ? 'in' : l.kind === 'break_start' ? 'break' : 'out';
+          if (st === 'break') reason = 'ON_BREAK'; else if (kind === 'in' && st !== 'out') reason = 'ALREADY_IN'; else if (kind === 'out' && st !== 'in') reason = 'NOT_IN';
+        }
+        if (reason) skipped.push({ id, name: mem ? mem.full_name : '', reason });
+        else { db.attendance.push({ id: uid(), employee_id: id, kind, at: new Date().toISOString(), lat: pos.lat, lng: pos.lng, accuracy_m: pos.acc, address: addr.slice(0, 300), note: (note || '').trim().slice(0, 300), recorded_by: m.id, recorded_by_name: m.full_name }); done++; }
+      }
+      save(); return { done, skipped };
+    },
+    async teamLinks() { return db.team.slice(); },
+    async setTeam(mid, ids) { db.team = db.team.filter(t => t.manager_id !== mid).concat(ids.filter(i => i !== mid).map(i => ({ manager_id: mid, member_id: i }))); save(); },
+    async leaves() { return db.leaves.slice().sort((a, b) => b.from_date.localeCompare(a.from_date)).filter(l => cur().role === 'admin' || (myEmp() && l.employee_id === myEmp().id)); },
+    async requestLeave(kind, from, to, reason) {
+      const e = myEmp(); if (!e) err('NOT_EMPLOYEE');
+      if (!LEAVE[kind]) err('BAD_KIND');
+      if (!from || !to || to < from) err('BAD_DATES');
+      if (from < addDays(dayKey(Date.now()), -30)) err('TOO_OLD');
+      if (dayDiff(from, to) > 60) err('TOO_LONG');
+      if (db.leaves.some(l => l.employee_id === e.id && l.status !== 'rejected' && l.from_date <= to && l.to_date >= from)) err('LEAVE_OVERLAP');
+      const r = { id: uid(), employee_id: e.id, kind, from_date: from, to_date: to, days: dayDiff(from, to) + 1, reason: (reason || '').trim().slice(0, 300), status: 'pending', admin_note: '', created_at: new Date().toISOString(), decided_at: null };
+      db.leaves.push(r); save(); return r;
+    },
+    async cancelLeave(id) { const e = myEmp(); const i = db.leaves.findIndex(l => l.id === id && e && l.employee_id === e.id && l.status === 'pending'); if (i < 0) err('NOT_FOUND'); db.leaves.splice(i, 1); save(); },
+    async decideLeave(id, status, days, note) {
+      if (cur().role !== 'admin') err('NOT_ADMIN'); const l = db.leaves.find(x => x.id === id); if (!l) err('NOT_FOUND');
+      l.status = status; if (days > 0) l.days = days; l.admin_note = (note || '').trim().slice(0, 300); l.decided_at = new Date().toISOString(); save(); return l;
+    },
+    async addLeave(emp, kind, from, to, days, note) {
+      if (cur().role !== 'admin') err('NOT_ADMIN');
+      if (!from || !to || to < from) err('BAD_DATES');
+      if (db.leaves.some(l => l.employee_id === emp && l.status !== 'rejected' && l.from_date <= to && l.to_date >= from)) err('LEAVE_OVERLAP');
+      const r = { id: uid(), employee_id: emp, kind, from_date: from, to_date: to, days: days > 0 ? days : dayDiff(from, to) + 1, reason: '', status: 'approved', admin_note: (note || '').trim(), created_at: new Date().toISOString(), decided_at: new Date().toISOString() };
+      db.leaves.push(r); save(); return r;
+    },
+    async delLeave(id) { if (cur().role !== 'admin') err('NOT_ADMIN'); db.leaves = db.leaves.filter(l => l.id !== id); save(); },
     async attendance(from, to) { return db.attendance.filter(a => a.at >= from && a.at < to).sort((a, b) => b.at.localeCompare(a.at)); },
     reset() { localStorage.removeItem(KEY); }
   };
@@ -322,7 +410,7 @@ function calc(recsAsc, nowMs) {
 }
 const kindPill = k => `<span class="pill ${KIND[k][1]}">${KIND[k][0]}</span>`;
 const recLine = r => `<div class="it" style="align-items:flex-start"><div class="grow">${kindPill(r.kind)} <b>${fmtTime(r.at)}</b>
-  <div>${esc(r.address || '—')}</div>${r.note ? `<div class="mut">${esc(r.note)}</div>` : ''}</div><a href="${mapLink(r.lat, r.lng)}" target="_blank" rel="noopener">الموقع</a></div>`;
+  <div>${esc(r.address || '—')}</div>${r.recorded_by_name ? `<div class="mut">سجّله جماعيًا: ${esc(r.recorded_by_name)}</div>` : ''}${r.note ? `<div class="mut">${esc(r.note)}</div>` : ''}</div><a href="${mapLink(r.lat, r.lng)}" target="_blank" rel="noopener">الموقع</a></div>`;
 const rememberAddr = a => { try { const l = JSON.parse(localStorage.getItem('att.addr') || '[]').filter(x => x !== a); l.unshift(a); localStorage.setItem('att.addr', JSON.stringify(l.slice(0, 10))); } catch (e) { } };
 const recentAddr = () => { try { return JSON.parse(localStorage.getItem('att.addr') || '[]'); } catch (e) { return []; } };
 
@@ -338,6 +426,8 @@ function getPosition() {
 }
 
 async function renderEmployee() {
+  if (S.etab === 'leaves') return renderEmpLeaves();
+  if (S.etab === 'team') return renderEmpTeam();
   const e = S.me.emp;
   let hist = [];
   try { hist = await api.myHistory(e.id); } catch (er) { setMsg('err', errText(er)); }
@@ -352,12 +442,14 @@ async function renderEmployee() {
   }).join('');
   const stPill = st === 'in' ? `<span class="pill in">في العمل · ${esc(last.address || '')}</span>` : st === 'break' ? `<span class="pill brk">في استراحة منذ ${fmtTime(last.at)}</span>` : last ? `<span class="pill out">خارج العمل · آخر انصراف ${fmtTime(last.at)}</span>` : `<span class="pill out">لا يوجد تسجيل بعد</span>`;
   const dis = S.busy ? 'disabled' : '';
-  const addrBlock = st === 'break' ? '' : `<div style="width:100%;max-width:420px;text-align:start">
+  const gLock = st === 'out' && todayRecs.find(r => r.kind === 'in' && r.recorded_by_name);
+  const addrBlock = st === 'break' || gLock ? '' : `<div style="width:100%;max-width:420px;text-align:start">
       <label for="addr">${st === 'in' ? 'عنوان المكان اللي إنت مغادره (إجباري)' : 'عنوان المكان اللي وصلت له أو بدأت منه (إجباري)'}</label>
       <input id="addr" list="addrList" maxlength="300" placeholder="مثال: موقع مشروع العاصمة الإدارية، أو هيئة الطرق - مدينة نصر" autocomplete="off" value="${esc(S.data.addr || '')}">
       <datalist id="addrList">${recentAddr().map(a => `<option value="${esc(a)}">`).join('')}</datalist>
       <label for="note">ملاحظة (اختياري)</label><input id="note" maxlength="300" placeholder="مثال: خارج للموقع، معاينة، اجتماع" value="${esc(S.data.note || '')}"></div>`;
-  const btns = st === 'out' ? `<button class="btn bigbtn" data-act="punch" data-kind="in" ${dis}>${S.busy ? 'جاري تحديد موقعك…' : 'تسجيل حضور'}</button>`
+  const btns = gLock ? `<div class="msg inf" style="width:100%">تم تسجيل حضورك جماعيًا بواسطة <b>${esc(gLock.recorded_by_name)}</b>. الحضور الفردي مقفول لباقي اليوم، والمدير هو اللي بيسجّل حضورك في أي موقع جديد. الانصراف متاح فرديًا أو جماعيًا.</div>`
+    : st === 'out' ? `<button class="btn bigbtn" data-act="punch" data-kind="in" ${dis}>${S.busy ? 'جاري تحديد موقعك…' : 'تسجيل حضور'}</button>`
     : st === 'in' ? `<button class="btn bigbtn outb" data-act="punch" data-kind="out" ${dis}>${S.busy ? 'جاري تحديد موقعك…' : 'تسجيل انصراف'}</button><button class="btn sec" style="width:100%;max-width:340px" data-act="punch" data-kind="break_start" ${dis}>بدء استراحة</button>`
       : `<button class="btn bigbtn" data-act="punch" data-kind="break_end" ${dis}>${S.busy ? 'جاري تحديد موقعك…' : 'إنهاء الاستراحة'}</button>`;
   app.innerHTML = `${demoBar()}
@@ -374,7 +466,7 @@ async function renderEmployee() {
   <div class="card"><h2>تسجيلات النهارده</h2>
     ${todayRecs.length ? `<div class="list">${todayRecs.map(recLine).join('')}</div>` : '<div class="mut">لسه مفيش تسجيل النهارده.</div>'}
   </div>
-  <div class="card"><h2>آخر الأيام</h2>${days ? `<div class="list">${days}</div>` : '<div class="mut">مفيش بيانات.</div>'}</div>`;
+  <div class="card"><h2>آخر الأيام</h2>${days ? `<div class="list">${days}</div>` : '<div class="mut">مفيش بيانات.</div>'}</div>${empNav()}`;
   const tick = () => { const c = $('#clock'); if (c) c.textContent = new Intl.DateTimeFormat('ar-EG', { timeZone: TZ, hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date()); };
   tick(); S.clock = setInterval(tick, 1000);
 }
@@ -397,38 +489,41 @@ async function punch(kind) {
 }
 
 /* ---------- شاشة الأدمن ---------- */
-const TABS = [['today', 'النهارده'], ['records', 'السجلات'], ['emps', 'الموظفين']];
+const TABS = [['today', 'النهارده'], ['reports', 'التقارير'], ['leaves', 'الإجازات'], ['records', 'السجلات'], ['emps', 'الموظفين']];
 async function renderAdmin() {
   app.innerHTML = `${demoBar()}<header class="top"><h1>لوحة الأدمن</h1><button class="btn sec sm" data-act="logout">خروج</button></header>
   ${msgHtml()}<div id="pane"><div class="mut">جاري التحميل…</div></div>
   <nav class="tabs">${TABS.map(([k, n]) => `<button data-act="tab" data-v="${k}" class="${S.tab === k ? 'on' : ''}">${n}</button>`).join('')}</nav>`;
-  try { await ({ today: paneToday, records: paneRecords, emps: paneEmps })[S.tab](); }
+  try { await ({ today: paneToday, reports: paneReports, leaves: paneLeaves, records: paneRecords, emps: paneEmps })[S.tab](); }
   catch (e) { $('#pane').innerHTML = `<div class="msg err">${esc(errText(e))}</div>`; }
 }
 
 async function paneToday() {
   const now = Date.now();
-  const [emps, recs] = await Promise.all([api.employees(), api.attendance(new Date(now - 48 * 3600e3).toISOString(), new Date(now + 3600e3).toISOString())]);
+  const [emps, recs, leaves] = await Promise.all([api.employees(), api.attendance(new Date(now - 48 * 3600e3).toISOString(), new Date(now + 3600e3).toISOString()), api.leaves()]);
   const act = emps.filter(e => e.active);
-  const rank = { in: 0, break: 1, out: 2, none: 3 };
+  const rank = { in: 0, break: 1, out: 2, leave: 3, none: 4 };
+  const pendingN = leaves.filter(l => l.status === 'pending').length;
   const rows = act.map(e => {
     const mine = recs.filter(r => r.employee_id === e.id);           // الأحدث أولًا
     const last = mine[0];
     const today = mine.filter(r => dayKey(r.at) === dayKey(now)).slice().reverse();
     let st = 'none';
     if (last) { const s = stateOf(last); st = s === 'out' && dayKey(last.at) !== dayKey(now) ? 'none' : s; }
-    return { e, last, st, c: calc(today, now), n: today.filter(r => r.kind === 'in').length };
+    const lvNow = dayLeave(e.id, dayKey(now), leaves);
+    if (st === 'none' && lvNow) st = 'leave';
+    return { e, last, st, lvNow, c: calc(today, now), n: today.filter(r => r.kind === 'in').length };
   }).sort((a, b) => (rank[a.st] - rank[b.st]) || a.e.full_name.localeCompare(b.e.full_name, 'ar'));
   const cnt = k => rows.filter(r => r.st === k).length;
-  const lbl = { in: 'في العمل', break: 'استراحة', out: 'انصرف', none: 'لم يحضر' };
-  const pc = { in: 'in', break: 'brk', out: 'out', none: 'none' };
-  $('#pane').innerHTML = `<div class="stat"><div><b>${cnt('in')}</b>في العمل</div><div><b>${cnt('break')}</b>استراحة</div><div><b>${cnt('out')}</b>انصرف</div><div><b>${cnt('none')}</b>لم يحضر</div></div>
+  const lbl = { in: 'في العمل', break: 'استراحة', out: 'انصرف', leave: 'إجازة', none: 'لم يحضر' };
+  const pc = { in: 'in', break: 'brk', out: 'out', leave: 'brk', none: 'none' };
+  $('#pane').innerHTML = `${pendingN ? `<div class="msg inf"><b>${pendingN}</b> طلب إجازة بيستنى قرارك. <a href="#" data-act="tab" data-v="leaves">افتح الإجازات</a></div>` : ''}<div class="stat"><div><b>${cnt('in')}</b>في العمل</div><div><b>${cnt('break')}</b>استراحة</div><div><b>${cnt('out')}</b>انصرف</div><div><b>${cnt('leave')}</b>إجازة</div><div><b>${cnt('none')}</b>لم يحضر</div></div>
   <div class="card" style="margin-top:12px"><div class="row sp"><h2 style="margin:0">${fmtDate(now)}</h2><button class="btn sec sm" data-act="refresh">تحديث</button></div>
-  <div class="list">${rows.length ? rows.map(({ e, last, st, c, n }) => `<div class="it" style="align-items:flex-start"><div class="grow"><b>${esc(e.full_name)}</b>
-    <div class="mut">${last && st !== 'none' ? `${KIND[last.kind][0]} ${fmtTime(last.at)}${dayKey(last.at) !== dayKey(now) ? ' (' + fmtDate(last.at) + ')' : ''}` : 'لا يوجد تسجيل'}</div>
-    ${last && st !== 'none' ? `<div>${esc(last.address || '—')}</div>` : ''}
-    ${st !== 'none' ? `<div class="mut">ساعات اليوم ${fmtHours(c.work)} · ${n} موقع</div>` : ''}</div>
-    <div class="row" style="flex-direction:column;align-items:flex-end"><span class="pill ${pc[st]}">${lbl[st]}</span>${last && st !== 'none' ? `<a href="${mapLink(last.lat, last.lng)}" target="_blank" rel="noopener">الموقع</a>` : ''}</div></div>`).join('') : '<div class="mut">أضف موظفين من تبويب «الموظفين».</div>'}</div></div>`;
+  <div class="list">${rows.length ? rows.map(({ e, last, st, c, n, lvNow }) => `<div class="it" style="align-items:flex-start"><div class="grow"><b>${esc(e.full_name)}</b>
+    <div class="mut">${st === 'leave' ? 'إجازة ' + LEAVE[lvNow ? lvNow.kind : 'regular'] : last && st !== 'none' ? `${KIND[last.kind][0]} ${fmtTime(last.at)}${dayKey(last.at) !== dayKey(now) ? ' (' + fmtDate(last.at) + ')' : ''}` : 'لا يوجد تسجيل'}</div>
+    ${last && st !== 'none' && st !== 'leave' ? `<div>${esc(last.address || '—')}</div>` : ''}
+    ${st !== 'none' && st !== 'leave' ? `<div class="mut">ساعات اليوم ${fmtHours(c.work)} · ${n} موقع</div>` : ''}</div>
+    <div class="row" style="flex-direction:column;align-items:flex-end"><span class="pill ${pc[st]}">${lbl[st]}</span>${last && st !== 'none' && st !== 'leave' ? `<a href="${mapLink(last.lat, last.lng)}" target="_blank" rel="noopener">الموقع</a>` : ''}</div></div>`).join('') : '<div class="mut">أضف موظفين من تبويب «الموظفين».</div>'}</div></div>`;
 }
 
 function monthBounds(m) {
@@ -444,26 +539,214 @@ async function paneRecords() {
   const byEmp = {};
   recs.slice().reverse().forEach(r => { (byEmp[r.employee_id] ||= []).push(r); });
   const tot = Object.keys(byEmp).map(id => ({ id, ...calc(byEmp[id]) })).sort((a, b) => nm(a.id).localeCompare(nm(b.id), 'ar'));
-  S.data.csv = recs.map(r => [nm(r.employee_id), KIND[r.kind][0], dayKey(r.at), fmtTime(r.at), r.address, r.note, r.lat, r.lng]);
+  S.data.csv = recs.map(r => [nm(r.employee_id), KIND[r.kind][0], dayKey(r.at), fmtTime(r.at), r.address, r.note, r.recorded_by_name || '', r.lat, r.lng]);
+  S.data.csvHead = ['الموظف', 'النوع', 'اليوم', 'الوقت', 'العنوان', 'ملاحظة', 'سُجّل بواسطة المدير', 'lat', 'lng']; S.data.csvName = 'attendance-' + m;
   $('#pane').innerHTML = `<div class="card"><div class="grid2">
     <div><label for="fm">الشهر</label><input id="fm" type="month" value="${m}"></div>
     <div><label for="fw">الموظف</label><select id="fw"><option value="">الكل</option>${emps.map(e => `<option value="${e.id}" ${e.id === who ? 'selected' : ''}>${esc(e.full_name)}</option>`).join('')}</select></div></div>
     <div class="row" style="margin-top:10px"><button class="btn sec sm" data-act="csv">تصدير CSV</button><span class="mut">${recs.length} تسجيل</span></div></div>
   <div class="card"><h2>ساعات العمل (بدون الاستراحة)</h2><div class="list">${tot.length ? tot.map(t => `<div class="it"><div>${esc(nm(t.id))}<div class="mut">استراحة ${fmtHours(t.brk)}${t.open ? ' · فيه فترة مفتوحة' : ''}</div></div><b>${fmtHours(t.work)}</b></div>`).join('') : '<div class="mut">لا توجد بيانات.</div>'}</div></div>
   <div class="card"><h2>التسجيلات</h2><div class="scroll"><table><thead><tr><th>الموظف</th><th>النوع</th><th>اليوم</th><th>الوقت</th><th>العنوان</th><th>ملاحظة</th><th>الموقع</th></tr></thead><tbody>
-  ${recs.map(r => `<tr><td>${esc(nm(r.employee_id))}</td><td>${kindPill(r.kind)}</td><td>${dayKey(r.at)}</td><td>${fmtTime(r.at)}</td><td style="white-space:normal;min-width:160px">${esc(r.address)}</td><td style="white-space:normal">${esc(r.note)}</td><td><a href="${mapLink(r.lat, r.lng)}" target="_blank" rel="noopener">خريطة</a></td></tr>`).join('') || '<tr><td colspan="7" class="mut">لا توجد تسجيلات.</td></tr>'}
+  ${recs.map(r => `<tr><td>${esc(nm(r.employee_id))}</td><td>${kindPill(r.kind)}</td><td>${dayKey(r.at)}</td><td>${fmtTime(r.at)}</td><td style="white-space:normal;min-width:160px">${esc(r.address)}${r.recorded_by_name ? `<div class="mut">جماعي: ${esc(r.recorded_by_name)}</div>` : ''}</td><td style="white-space:normal">${esc(r.note)}</td><td><a href="${mapLink(r.lat, r.lng)}" target="_blank" rel="noopener">خريطة</a></td></tr>`).join('') || '<tr><td colspan="7" class="mut">لا توجد تسجيلات.</td></tr>'}
   </tbody></table></div></div>`;
 }
 
 async function paneEmps() {
-  const emps = await api.employees();
-  S.data.emps = emps;
+  const [emps, leaves, links] = await Promise.all([api.employees(), api.leaves(), api.teamLinks()]);
+  S.data.emps = emps; S.data.leaves = leaves; S.data.links = links;
   $('#pane').innerHTML = `<div class="card"><h2>إضافة موظف</h2>
     <form id="empForm"><label for="en">الاسم</label><input id="en" required maxlength="60">
+    <label for="eb">الرصيد الابتدائي للإجازات (أيام)</label><input id="eb" type="number" min="0" step="0.5" value="21" required>
     <div style="margin-top:12px"><button class="btn">إضافة وتوليد كود</button></div></form></div>
-  <div class="card"><h2>الموظفين (${emps.length})</h2><div class="list">${emps.map(e => `<div class="it" style="align-items:flex-start"><div class="grow"><b>${esc(e.full_name)}</b> ${e.active ? '' : '<span class="pill none">موقوف</span>'}
-    <div class="mut">${e.user_id ? 'الحساب مفعّل' : `كود التفعيل: <span class="code" style="font-size:16px">${esc(e.join_code)}</span>`}</div></div>
-    <div class="row"><button class="btn sec sm" data-act="empEdit" data-id="${e.id}">تعديل</button></div></div>`).join('') || '<div class="mut">لا يوجد موظفين.</div>'}</div></div>`;
+  <div class="card"><h2>الموظفين (${emps.length})</h2><div class="list">${emps.map(e => { const b = balanceOf(e, leaves); return `<div class="it" style="align-items:flex-start"><div class="grow"><b>${esc(e.full_name)}</b> ${e.active ? '' : '<span class="pill none">موقوف</span>'}
+    <div class="mut">${e.user_id ? 'الحساب مفعّل' : `كود التفعيل: <span class="code" style="font-size:16px">${esc(e.join_code)}</span>`}</div>
+    <div class="mut">رصيد الإجازات: ${nDays(b.remaining)} من ${nDays(b.initial)} يوم</div>${e.is_manager ? `<div class="mut">مدير موقع · فريقه ${links.filter(l => l.manager_id === e.id).length} موظف</div>` : ''}</div>
+    <div class="row"><button class="btn sec sm" data-act="empEdit" data-id="${e.id}">تعديل</button></div></div>`; }).join('') || '<div class="mut">لا يوجد موظفين.</div>'}</div></div>`;
+}
+
+/* ---------- الإجازات: أدوات ---------- */
+function balanceOf(emp, leaves) {
+  const mine = leaves.filter(l => l.employee_id === emp.id && l.from_date >= (emp.leave_from || '0000-00-00'));
+  const sum = f => mine.filter(f).reduce((a, l) => a + Number(l.days), 0);
+  const byKind = {}; Object.keys(LEAVE).forEach(k => byKind[k] = sum(l => l.status === 'approved' && l.kind === k));
+  const used = sum(l => l.status === 'approved' && DEDUCT.includes(l.kind));
+  const pending = sum(l => l.status === 'pending' && DEDUCT.includes(l.kind));
+  const initial = Number(emp.leave_balance || 0);
+  return { initial, used, pending, remaining: initial - used, byKind };
+}
+const leavePill = st => `<span class="pill ${LSTATUS[st][1]}">${LSTATUS[st][0]}</span>`;
+const kindOptions = sel => Object.keys(LEAVE).map(k => `<option value="${k}" ${k === sel ? 'selected' : ''}>${LEAVE[k]}${DEDUCT.includes(k) ? ' (من الرصيد)' : ''}</option>`).join('');
+
+async function renderEmpLeaves() {
+  let leaves = [];
+  try { S.me = await api.me(); leaves = await api.leaves(); } catch (er) { setMsg('err', errText(er)); }
+  const e = S.me.emp, b = balanceOf(e, leaves), today = dayKey(Date.now());
+  app.innerHTML = `${demoBar()}
+  <header class="top"><h1>إجازاتي</h1><button class="btn sec sm" data-act="logout">خروج</button></header>
+  ${msgHtml()}
+  <div class="card"><h2>رصيد الإجازات</h2>
+    <div class="stat"><div><b>${nDays(b.initial)}</b>الرصيد الابتدائي</div><div><b>${nDays(b.used)}</b>المستهلك</div><div><b>${nDays(b.remaining)}</b>المتبقي</div></div>
+    ${b.pending ? `<div class="mut" style="margin-top:8px">فيه ${nDays(b.pending)} يوم قيد المراجعة (لسه ما اتخصمش).</div>` : ''}
+    <div class="mut" style="margin-top:8px">الرصيد بيتخصم منه: ${DEDUCT.map(k => LEAVE[k]).join(' و')}. الأرقام دي بيعدّلها الأدمن فقط. محسوب من ${fmtDay(e.leave_from || today)}.</div>
+    <div class="list" style="margin-top:8px">${Object.keys(LEAVE).map(k => `<div class="it"><span>${LEAVE[k]}</span><b>${nDays(b.byKind[k])} يوم</b></div>`).join('')}</div></div>
+  <div class="card"><h2>طلب إجازة</h2>
+    <form id="leaveForm"><label for="lk">نوع الإجازة</label><select id="lk">${kindOptions('regular')}</select>
+    <div class="grid2"><div><label for="lf">من يوم</label><input id="lf" type="date" value="${today}" required></div><div><label for="lt">إلى يوم</label><input id="lt" type="date" value="${today}" required></div></div>
+    <div class="mut" style="margin-top:6px" id="ldays">المدة: يوم واحد</div>
+    <label for="lr">السبب (اختياري)</label><input id="lr" maxlength="300">
+    <div style="margin-top:12px"><button class="btn" style="width:100%">إرسال الطلب</button></div></form></div>
+  <div class="card"><h2>طلباتي</h2><div class="list">${leaves.length ? leaves.map(l => `<div class="it" style="align-items:flex-start"><div class="grow"><b>${LEAVE[l.kind]}</b> ${leavePill(l.status)}
+    <div>${fmtShort(l.from_date)}${l.to_date !== l.from_date ? ' ← ' + fmtShort(l.to_date) : ''} · ${nDays(l.days)} يوم</div>
+    ${l.reason ? `<div class="mut">${esc(l.reason)}</div>` : ''}${l.admin_note ? `<div class="mut">رد الأدمن: ${esc(l.admin_note)}</div>` : ''}</div>
+    ${l.status === 'pending' ? `<button class="btn bad sm" data-act="lvCancel" data-id="${l.id}">إلغاء الطلب</button>` : ''}</div>`).join('') : '<div class="mut">لسه ما طلبتش إجازات.</div>'}</div></div>
+  ${empNav()}`;
+}
+const empNav = () => `<nav class="tabs"><button data-act="etab" data-v="home" class="${!S.etab || S.etab === 'home' ? 'on' : ''}">الحضور</button>${S.me && S.me.emp && S.me.emp.is_manager ? `<button data-act="etab" data-v="team" class="${S.etab === 'team' ? 'on' : ''}">فريقي</button>` : ''}<button data-act="etab" data-v="leaves" class="${S.etab === 'leaves' ? 'on' : ''}">إجازاتي</button></nav>`;
+
+/* ---------- مدير الموقع: الحضور الجماعي ---------- */
+const GREASON = { ALREADY_IN: 'مسجّل حضور بالفعل', NOT_IN: 'مش مسجّل حضور', ON_BREAK: 'في استراحة', NOT_MEMBER: 'مش في فريقك' };
+async function renderEmpTeam() {
+  let team = [];
+  try { S.me = await api.me(); if (!S.me.emp.is_manager) { S.etab = 'home'; return render(); } team = await api.team(); } catch (er) { setMsg('err', errText(er)); }
+  const mode = S.data.gmode || 'in', want = mode === 'in' ? 'out' : 'in';
+  const elig = team.filter(m => m.state === want);
+  const stLbl = { in: 'في العمل', out: 'خارج العمل', break: 'في استراحة' };
+  app.innerHTML = `${demoBar()}
+  <header class="top"><h1>فريقي · ${esc(S.me.emp.full_name)}</h1><button class="btn sec sm" data-act="logout">خروج</button></header>
+  ${msgHtml()}
+  <div class="card">
+    <div class="row"><button class="btn grow ${mode === 'in' ? '' : 'sec'}" data-act="gmode" data-v="in">حضور جماعي</button><button class="btn grow ${mode === 'out' ? '' : 'sec'}" data-act="gmode" data-v="out">انصراف جماعي</button></div>
+    <div class="mut" style="margin-top:8px">هيتسجّل موقعك الحالي (GPS) والعنوان اللي هتكتبه لكل الموظفين المختارين. ${mode === 'in' ? 'بعد الحضور الجماعي، الحضور الفردي بيتقفل لهم لباقي اليوم.' : 'الانصراف متاح للمختارين اللي حضورهم مسجّل.'}</div>
+  </div>
+  <form id="teamForm" class="card">
+    <div class="row sp"><h2 style="margin:0">اختار الموظفين (${team.length})</h2>${elig.length ? '<button type="button" class="btn sec sm" data-act="gall">تحديد الكل</button>' : ''}</div>
+    <div class="list">${team.length ? team.map(m => {
+      const ok = m.state === want;
+      return `<label class="it chk" style="${ok ? '' : 'opacity:.55'}"><span class="row" style="gap:10px"><input type="checkbox" name="gm" value="${m.id}" ${ok ? '' : 'disabled'}><span><b>${esc(m.full_name)}</b>
+        <div class="mut">${m.last_address ? esc(m.last_address) + ' · ' + fmtTime(m.last_at) : 'لا يوجد تسجيل'}${m.group_today ? ' · مسجّل جماعيًا اليوم' : ''}</div></span></span><span class="pill ${m.state === 'in' ? 'in' : m.state === 'break' ? 'brk' : 'out'}">${stLbl[m.state]}</span></label>`; }).join('') : '<div class="mut">مفيش موظفين في فريقك. الأدمن هو اللي بيحدد فريقك.</div>'}</div>
+    ${team.length ? `<label for="gaddr">عنوان الموقع (إجباري)</label><input id="gaddr" list="addrList" maxlength="300" placeholder="مثال: موقع مشروع العاصمة الإدارية" autocomplete="off" value="${esc(S.data.gaddr || '')}">
+    <datalist id="addrList">${recentAddr().map(a => `<option value="${esc(a)}">`).join('')}</datalist>
+    <label for="gnote">ملاحظة (اختياري)</label><input id="gnote" maxlength="300">
+    <div style="margin-top:14px"><button class="btn bigbtn ${mode === 'out' ? 'outb' : ''}" id="gsub" style="width:100%;max-width:none" ${S.busy || !elig.length ? 'disabled' : ''}>${S.busy ? 'جاري تحديد موقعك…' : mode === 'in' ? 'تثبيت الحضور للمختارين' : 'تثبيت الانصراف للمختارين'}</button></div>` : ''}
+  </form>
+  ${empNav()}`;
+}
+async function groupSubmit() {
+  const mode = S.data.gmode || 'in';
+  const ids = [...document.querySelectorAll('#teamForm input[name=gm]:checked')].map(i => i.value);
+  const address = $('#gaddr').value.trim(), note = $('#gnote').value.trim();
+  S.data.gaddr = address;
+  if (!ids.length) { setMsg('err', ERR.NO_MEMBERS); return renderEmpTeam(); }
+  if (address.length < 3) { setMsg('err', ERR.ADDRESS_REQUIRED); return renderEmpTeam(); }
+  S.busy = true; setMsg(); await renderEmpTeam();
+  try {
+    const pos = await getPosition();
+    if (pos.acc > 300) throw { message: 'LOW_ACCURACY' };
+    const r = await api.groupCheck(mode, ids, pos, address, note);
+    rememberAddr(address); S.data.gaddr = '';
+    const sk = (r.skipped || []).map(x => `${x.name || 'موظف'} (${GREASON[x.reason] || x.reason})`);
+    setMsg(r.done ? 'okm' : 'err', `${mode === 'in' ? 'تم تثبيت الحضور' : 'تم تثبيت الانصراف'} لـ ${r.done} موظف${sk.length ? '. اتخطّى: ' + sk.join('، ') : ''}`);
+  } catch (e) { setMsg('err', errText(e)); }
+  S.busy = false; renderEmpTeam();
+}
+
+/* ---------- الأدمن: الإجازات ---------- */
+async function paneLeaves() {
+  const [emps, leaves] = await Promise.all([api.employees(), api.leaves()]);
+  S.data.emps = emps; S.data.leaves = leaves;
+  const nm = id => (emps.find(e => e.id === id) || {}).full_name || '—';
+  const rem = id => { const e = emps.find(x => x.id === id); return e ? balanceOf(e, leaves).remaining : 0; };
+  const pend = leaves.filter(l => l.status === 'pending').sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const done = leaves.filter(l => l.status !== 'pending').slice(0, 60);
+  const row = (l, actions) => `<div class="it" style="align-items:flex-start"><div class="grow"><b>${esc(nm(l.employee_id))}</b> · ${LEAVE[l.kind]} ${leavePill(l.status)}
+    <div>${fmtShort(l.from_date)}${l.to_date !== l.from_date ? ' ← ' + fmtShort(l.to_date) : ''} · ${nDays(l.days)} يوم</div>
+    ${l.reason ? `<div class="mut">السبب: ${esc(l.reason)}</div>` : ''}${l.admin_note ? `<div class="mut">ملاحظة: ${esc(l.admin_note)}</div>` : ''}
+    ${l.status === 'pending' ? `<div class="mut">المتبقي من رصيده: ${nDays(rem(l.employee_id))} يوم</div>` : ''}</div>${actions}</div>`;
+  $('#pane').innerHTML = `<div class="card"><div class="row sp"><h2 style="margin:0">طلبات تنتظر قرارك (${pend.length})</h2><button class="btn sm" data-act="lvAdd">+ إضافة إجازة</button></div>
+  <div class="list">${pend.length ? pend.map(l => row(l, `<button class="btn sm" data-act="lvDecide" data-id="${l.id}">مراجعة</button>`)).join('') : '<div class="mut">مفيش طلبات معلّقة.</div>'}</div></div>
+  <div class="card"><h2>آخر القرارات</h2><div class="list">${done.length ? done.map(l => row(l, `<button class="btn sec sm" data-act="lvDel" data-id="${l.id}">حذف</button>`)).join('') : '<div class="mut">لا توجد بيانات.</div>'}</div></div>`;
+}
+function decideDlg(id) {
+  const l = S.data.leaves.find(x => x.id === id), nm = (S.data.emps.find(e => e.id === l.employee_id) || {}).full_name;
+  dlg(`<h2 style="margin-top:0">${esc(nm)} · ${LEAVE[l.kind]}</h2><div id="dmsg"></div>
+  <div>${fmtDay(l.from_date)}${l.to_date !== l.from_date ? ' ← ' + fmtDay(l.to_date) : ''}</div>${l.reason ? `<div class="mut">السبب: ${esc(l.reason)}</div>` : ''}
+  <form id="decForm" data-id="${id}"><label for="dd">عدد الأيام اللي هتتحسب (عدّلها لو فيه جمعة أو إجازة رسمية)</label><input id="dd" type="number" min="0.5" step="0.5" value="${l.days}" required>
+  <label for="dn">ملاحظة للموظف (اختياري)</label><input id="dn" maxlength="300">
+  <div class="row" style="margin-top:14px"><button type="button" class="btn grow" data-act="lvApprove">قبول</button><button type="button" class="btn bad grow" data-act="lvReject">رفض</button><button type="button" class="btn sec" data-act="close">إلغاء</button></div></form>`);
+}
+function addLeaveDlg() {
+  const today = dayKey(Date.now());
+  dlg(`<h2 style="margin-top:0">إضافة إجازة لموظف</h2><div id="dmsg"></div>
+  <form id="addLeaveForm"><label for="ae">الموظف</label><select id="ae">${S.data.emps.filter(e => e.active).map(e => `<option value="${e.id}">${esc(e.full_name)}</option>`).join('')}</select>
+  <label for="ak">النوع</label><select id="ak">${kindOptions('regular')}</select>
+  <div class="grid2"><div><label for="af">من</label><input id="af" type="date" value="${today}" required></div><div><label for="at">إلى</label><input id="at" type="date" value="${today}" required></div></div>
+  <label for="ad">عدد الأيام (سيبه فاضي = تلقائي)</label><input id="ad" type="number" min="0.5" step="0.5">
+  <label for="an">ملاحظة</label><input id="an" maxlength="300">
+  <div class="row" style="margin-top:14px"><button class="btn grow">حفظ (مقبولة مباشرة)</button><button type="button" class="btn sec" data-act="close">إلغاء</button></div></form>`);
+}
+
+/* ---------- الأدمن: التقارير ---------- */
+const PTYPES = { day: 'يومي', week: 'أسبوعي', month: 'شهري', year: 'سنوي' };
+function periodOf(type, ref) {
+  if (type === 'day') return [ref, ref];
+  if (type === 'week') { const dow = new Date(ref + 'T00:00:00Z').getUTCDay(); const st = addDays(ref, -((dow + 1) % 7)); return [st, addDays(st, 6)]; }   // الأسبوع يبدأ السبت
+  const y = +ref.slice(0, 4), m = +ref.slice(5, 7);
+  if (type === 'month') return [ref.slice(0, 7) + '-01', ref.slice(0, 7) + '-' + String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0')];
+  return [y + '-01-01', y + '-12-31'];
+}
+function shiftRef(type, ref, dir) {
+  if (type === 'day') return addDays(ref, dir);
+  if (type === 'week') return addDays(ref, 7 * dir);
+  const y = +ref.slice(0, 4), m = +ref.slice(5, 7) - 1;
+  const d = type === 'month' ? new Date(Date.UTC(y, m + dir, 1)) : new Date(Date.UTC(y + dir, 0, 1));
+  return d.toISOString().slice(0, 10);
+}
+const dayLeave = (empId, key, leaves) => leaves.find(l => l.employee_id === empId && l.status === 'approved' && l.from_date <= key && l.to_date >= key);
+
+async function paneReports() {
+  const type = S.data.rtype || 'month', ref = S.data.rref || dayKey(Date.now()), who = S.data.who || '';
+  const [from, to] = periodOf(type, ref);
+  const [emps, leaves, recsAll] = await Promise.all([api.employees(), api.leaves(), api.attendance(addDays(from, -1) + 'T00:00:00Z', addDays(to, 2) + 'T00:00:00Z')]);
+  const recs = recsAll.filter(r => { const k = dayKey(r.at); return k >= from && k <= to; });
+  const list = emps.filter(e => (!who || e.id === who) && (e.active || recs.some(r => r.employee_id === e.id)));
+  const rows = list.map(e => {
+    const mine = recs.filter(r => r.employee_id === e.id).slice().reverse();
+    const c = calc(mine);
+    const lv = {}; let lvTot = 0;
+    leaves.filter(l => l.employee_id === e.id && l.status === 'approved' && l.to_date >= from && l.from_date <= to).forEach(l => {
+      const ov = dayDiff(l.from_date > from ? l.from_date : from, l.to_date < to ? l.to_date : to) + 1, span = dayDiff(l.from_date, l.to_date) + 1;
+      const d = Number(l.days) * ov / span; lv[l.kind] = (lv[l.kind] || 0) + d; lvTot += d;
+    });
+    return { e, c, days: new Set(mine.filter(r => r.kind === 'in').map(r => dayKey(r.at))).size, sites: mine.filter(r => r.kind === 'in').length, lv, lvTot };
+  }).sort((a, b) => a.e.full_name.localeCompare(b.e.full_name, 'ar'));
+  const T = rows.reduce((a, r) => ({ w: a.w + r.c.work, b: a.b + r.c.brk, d: a.d + r.days, l: a.l + r.lvTot }), { w: 0, b: 0, d: 0, l: 0 });
+  const title = type === 'day' ? fmtDay(from) : type === 'year' ? from.slice(0, 4) : `${fmtDay(from)} ← ${fmtDay(to)}`;
+  const kcols = Object.keys(LEAVE);
+  S.data.csv = rows.map(r => [r.e.full_name, (r.c.work / 3600000).toFixed(2), (r.c.brk / 3600000).toFixed(2), r.days, r.sites, ...kcols.map(k => (r.lv[k] || 0).toFixed(1)), r.lvTot.toFixed(1)]);
+  S.data.csvHead = ['الموظف', 'ساعات العمل', 'ساعات الراحة', 'أيام الحضور', 'عدد المواقع', ...kcols.map(k => 'إجازة ' + LEAVE[k]), 'إجمالي الإجازات'];
+  S.data.csvName = `report-${type}-${from}`;
+  // تفاصيل يومية لموظف واحد
+  let detail = '';
+  if (who && type !== 'day' && dayDiff(from, to) < 370) {
+    const e = emps.find(x => x.id === who), mine = recs.filter(r => r.employee_id === who);
+    const trs = []; for (let k = from; k <= to; k = addDays(k, 1)) {
+      const rs = mine.filter(r => dayKey(r.at) === k).slice().reverse(), lvv = dayLeave(who, k, leaves);
+      if (!rs.length && !lvv) continue; const c = calc(rs);
+      trs.push(`<tr><td>${fmtDay(k)}</td><td>${nDays((c.work / 3600000).toFixed(2))}</td><td>${nDays((c.brk / 3600000).toFixed(2))}</td><td>${rs.filter(r => r.kind === 'in').length}</td><td>${lvv ? LEAVE[lvv.kind] : ''}</td></tr>`);
+    }
+    detail = `<div class="card"><h2>تفاصيل ${esc(e ? e.full_name : '')} يومًا بيوم</h2><div class="scroll"><table><thead><tr><th>اليوم</th><th>ساعات العمل</th><th>راحة (س)</th><th>مواقع</th><th>إجازة</th></tr></thead><tbody>${trs.join('') || '<tr><td colspan="5" class="mut">لا توجد بيانات.</td></tr>'}</tbody></table></div></div>`;
+  }
+  $('#pane').innerHTML = `<div class="card"><div class="grid2">
+    <div><label for="rt">نوع التقرير</label><select id="rt">${Object.keys(PTYPES).map(k => `<option value="${k}" ${k === type ? 'selected' : ''}>${PTYPES[k]}</option>`).join('')}</select></div>
+    <div><label for="rr">التاريخ</label><input id="rr" type="date" value="${ref}"></div></div>
+    <label for="fw">الموظف</label><select id="fw"><option value="">كل الموظفين</option>${emps.map(e => `<option value="${e.id}" ${e.id === who ? 'selected' : ''}>${esc(e.full_name)}</option>`).join('')}</select>
+    <div class="row sp" style="margin-top:10px"><div class="row"><button class="btn sec sm" data-act="rprev">السابق</button><button class="btn sec sm" data-act="rnext">التالي</button><button class="btn sec sm" data-act="rtoday">اليوم</button></div><button class="btn sec sm" data-act="csv">CSV</button></div></div>
+  <div class="card"><h2 style="margin-bottom:4px">تقرير ${PTYPES[type]}</h2><div class="mut">${title}</div>
+    <div class="stat" style="margin-top:10px"><div><b>${fmtHours(T.w)}</b>ساعات العمل</div><div><b>${fmtHours(T.b)}</b>الراحة</div><div><b>${nDays(T.l)}</b>أيام إجازات</div></div></div>
+  <div class="card"><div class="scroll"><table><thead><tr><th>الموظف</th><th>ساعات العمل</th><th>الراحة</th><th>أيام الحضور</th><th>المواقع</th>${kcols.map(k => `<th>${LEAVE[k]}</th>`).join('')}<th>إجمالي الإجازات</th></tr></thead><tbody>
+  ${rows.map(r => `<tr><td>${esc(r.e.full_name)}${r.c.open ? ' <span class="mut">*</span>' : ''}</td><td><b>${fmtHours(r.c.work)}</b></td><td>${fmtHours(r.c.brk)}</td><td>${nDays(r.days)}</td><td>${nDays(r.sites)}</td>${kcols.map(k => `<td>${r.lv[k] ? nDays(r.lv[k]) : '—'}</td>`).join('')}<td><b>${r.lvTot ? nDays(r.lvTot) : '—'}</b></td></tr>`).join('') || '<tr><td colspan="10" class="mut">لا توجد بيانات.</td></tr>'}
+  <tr><td><b>الإجمالي</b></td><td><b>${fmtHours(T.w)}</b></td><td>${fmtHours(T.b)}</td><td>${nDays(T.d)}</td><td></td>${kcols.map(() => '<td></td>').join('')}<td><b>${nDays(T.l)}</b></td></tr>
+  </tbody></table></div><div class="mut" style="margin-top:8px">* فيه فترة حضور مفتوحة (من غير انصراف) مش محسوبة. وقت التنقل بين انصراف وحضور مش محسوب ساعات عمل.</div></div>${detail}`;
 }
 
 /* ---------- نوافذ التعديل ---------- */
@@ -478,6 +761,11 @@ function editEmp(id) {
   const e = S.data.emps.find(x => x.id === id);
   dlg(`<h2 style="margin-top:0">تعديل: ${esc(e.full_name)}</h2><div id="dmsg"></div>
   <form id="emForm" data-id="${id}"><label for="emn">الاسم</label><input id="emn" required value="${esc(e.full_name)}">
+  <div class="grid2"><div><label for="emb">الرصيد الابتدائي (أيام)</label><input id="emb" type="number" min="0" step="0.5" value="${e.leave_balance ?? 0}" required></div>
+  <div><label for="emf">يُحسب الخصم من تاريخ</label><input id="emf" type="date" value="${e.leave_from || ''}" required></div></div>
+  <div class="mut">لما تبدأ سنة جديدة: حط الرصيد الجديد وتاريخ بداية السنة، والإجازات القديمة مش هتتخصم تاني.</div>
+  <label class="chk"><input id="emm" type="checkbox" ${e.is_manager ? 'checked' : ''}> مدير موقع (يقدر يثبّت حضور وانصراف جماعي)</label>
+  <div id="teamBox" ${e.is_manager ? '' : 'hidden'}><label>الموظفين تحت مسؤوليته</label>${S.data.emps.filter(x => x.id !== id && x.active).map(x => `<label class="chk"><input type="checkbox" name="tm" value="${x.id}" ${S.data.links.some(l => l.manager_id === id && l.member_id === x.id) ? 'checked' : ''}> ${esc(x.full_name)}</label>`).join('') || '<div class="mut">أضف موظفين الأول.</div>'}</div>
   <label class="chk"><input id="ema" type="checkbox" ${e.active ? 'checked' : ''}> الموظف نشط</label>
   <div class="row" style="margin-top:14px"><button class="btn grow">حفظ</button><button type="button" class="btn sec" data-act="empCode" data-id="${id}">كود جديد / فك الربط</button></div>
   <div class="row" style="margin-top:10px"><button type="button" class="btn bad" data-act="empDel" data-id="${id}">حذف الموظف وسجلاته</button><button type="button" class="btn sec" data-act="close">إلغاء</button></div></form>`);
@@ -493,8 +781,22 @@ document.addEventListener('click', async ev => {
   const a = t.dataset.act, id = t.dataset.id, v = t.dataset.v;
   try {
     if (a === 'mode') { S.authMode = v; setMsg(); renderAuth(); }
-    else if (a === 'logout') { api.signOut(); S.me = null; S.tab = 'today'; S.data = {}; setMsg(); render(); }
+    else if (a === 'logout') { api.signOut(); S.me = null; S.tab = 'today'; S.etab = 'home'; S.data = {}; setMsg(); render(); }
     else if (a === 'punch') await punch(t.dataset.kind);
+    else if (a === 'gmode') { S.data.gmode = v; setMsg(); renderEmpTeam(); }
+    else if (a === 'gall') { const bs = [...document.querySelectorAll('#teamForm input[name=gm]:not(:disabled)')]; const all = bs.every(b => b.checked); bs.forEach(b => b.checked = !all); }
+    else if (a === 'etab') { S.etab = v; setMsg(); render(); }
+    else if (a === 'lvCancel') { if (confirm('إلغاء طلب الإجازة؟')) { await api.cancelLeave(id); setMsg('okm', 'تم إلغاء الطلب.'); render(); } }
+    else if (a === 'lvAdd') addLeaveDlg();
+    else if (a === 'lvDecide') decideDlg(id);
+    else if (a === 'lvApprove' || a === 'lvReject') {
+      const f = $('#decForm'), days = parseFloat($('#dd').value);
+      if (!(days > 0)) return dmsg('عدد الأيام لازم يكون أكبر من صفر.');
+      await api.decideLeave(f.dataset.id, a === 'lvApprove' ? 'approved' : 'rejected', days, $('#dn').value); await refreshAdmin();
+    }
+    else if (a === 'lvDel') { if (confirm('حذف القرار نهائيًا؟ لو كانت مقبولة هيرجع الرصيد.')) { await api.delLeave(id); await renderAdmin(); } }
+    else if (a === 'rprev' || a === 'rnext') { const ty = S.data.rtype || 'month', r = S.data.rref || dayKey(Date.now()); S.data.rref = shiftRef(ty, r, a === 'rnext' ? 1 : -1); renderAdmin(); }
+    else if (a === 'rtoday') { S.data.rref = dayKey(Date.now()); renderAdmin(); }
     else if (a === 'tab') { S.tab = v; setMsg(); renderAdmin(); }
     else if (a === 'refresh') renderAdmin();
     else if (a === 'close') closeDlg();
@@ -502,10 +804,10 @@ document.addEventListener('click', async ev => {
     else if (a === 'empDel') { if (confirm('حذف الموظف وكل تسجيلاته نهائيًا؟ لو عايز توقفه بس، شيل علامة «نشط».')) { await api.delEmployee(id); await refreshAdmin(); } }
     else if (a === 'empCode') { const c = await api.newCode(id); dmsg('الكود الجديد: ' + c + ' (الحساب القديم اتفك ارتباطه)', 'okm'); }
     else if (a === 'csv') {
-      const rows = [['الموظف', 'النوع', 'اليوم', 'الوقت', 'العنوان', 'ملاحظة', 'lat', 'lng'], ...(S.data.csv || [])];
-      const csv = '﻿' + rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\r\n');
+      const rows = [S.data.csvHead || [], ...(S.data.csv || [])];
+      const csv = '\ufeff' + rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\r\n');
       const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-      const l = document.createElement('a'); l.href = url; l.download = 'attendance-' + (S.data.month || monthKey(Date.now())) + '.csv'; l.click(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+      const l = document.createElement('a'); l.href = url; l.download = (S.data.csvName || 'export') + '.csv'; l.click(); setTimeout(() => URL.revokeObjectURL(url), 2000);
     }
   } catch (e) { S.busy = false; dmsg(errText(e)); if (!$('#dmsg')) { setMsg('err', errText(e)); render(); } }
 });
@@ -513,6 +815,17 @@ document.addEventListener('click', async ev => {
 document.addEventListener('change', ev => {
   if (ev.target.id === 'fm') { S.data.month = ev.target.value || undefined; renderAdmin(); }
   if (ev.target.id === 'fw') { S.data.who = ev.target.value; renderAdmin(); }
+  if (ev.target.id === 'emm') { const b = $('#teamBox'); if (b) b.hidden = !ev.target.checked; }
+  if (ev.target.id === 'rt') { S.data.rtype = ev.target.value; renderAdmin(); }
+  if (ev.target.id === 'rr' && ev.target.value) { S.data.rref = ev.target.value; renderAdmin(); }
+});
+
+document.addEventListener('input', ev => {
+  if (ev.target.id === 'lf' || ev.target.id === 'lt') {
+    const f = $('#lf').value, t = $('#lt').value, d = $('#ldays');
+    if (f && t && t >= f) { const n = dayDiff(f, t) + 1; d.textContent = 'المدة: ' + (n === 1 ? 'يوم واحد' : nDays(n) + ' يوم'); } else d.textContent = 'تاريخ النهاية لازم يكون بعد البداية.';
+    if (ev.target.id === 'lf' && t < f) $('#lt').value = f;
+  }
 });
 
 document.addEventListener('submit', async ev => {
@@ -528,10 +841,21 @@ document.addEventListener('submit', async ev => {
     } else if (f.id === 'claimForm') {
       await api.claim($('#code').value.trim()); S.me = await api.me(); setMsg(); render();
     } else if (f.id === 'empForm') {
-      const e = await api.addEmployee($('#en').value.trim());
+      const e = await api.addEmployee($('#en').value.trim(), parseFloat($('#eb').value) || 0);
       setMsg('okm', `تمت إضافة ${e.full_name}. كود التفعيل: ${e.join_code} (ابعته له)`); await renderAdmin();
+    } else if (f.id === 'teamForm') {
+      await groupSubmit();
+    } else if (f.id === 'leaveForm') {
+      await api.requestLeave($('#lk').value, $('#lf').value, $('#lt').value, $('#lr').value);
+      setMsg('okm', 'تم إرسال الطلب، وهيوصل للأدمن.'); render();
+    } else if (f.id === 'addLeaveForm') {
+      await api.addLeave($('#ae').value, $('#ak').value, $('#af').value, $('#at').value, parseFloat($('#ad').value) || 0, $('#an').value);
+      await refreshAdmin();
+    } else if (f.id === 'decForm') {
+      /* بيتم من الأزرار */
     } else if (f.id === 'emForm') {
-      await api.updEmployee(f.dataset.id, { full_name: $('#emn').value.trim(), active: $('#ema').checked });
+      await api.updEmployee(f.dataset.id, { full_name: $('#emn').value.trim(), active: $('#ema').checked, leave_balance: Math.max(0, parseFloat($('#emb').value) || 0), leave_from: $('#emf').value, is_manager: $('#emm').checked });
+      await api.setTeam(f.dataset.id, $('#emm').checked ? [...f.querySelectorAll('input[name=tm]:checked')].map(i => i.value) : []);
       await refreshAdmin();
     }
   } catch (e) {
